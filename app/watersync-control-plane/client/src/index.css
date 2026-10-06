@@ -1,0 +1,430 @@
+@import '@databricks/appkit-ui/styles.css';
+
+body {
+  background: color-mix(in oklch, var(--muted) 62%, var(--background));
+}
+.app-shell {
+  background-image:
+    radial-gradient(circle at 92% 5%, color-mix(in oklch, var(--chart-1) 10%, transparent), transparent 24rem),
+    linear-gradient(to bottom, color-mix(in oklch, var(--primary) 5%, transparent), transparent 24rem);
+}
+.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in oklch, var(--background) 94%, transparent);
+  backdrop-filter: blur(14px);
+}
+.app-header::before {
+  display: block;
+  height: 3px;
+  background: linear-gradient(90deg, var(--primary) 0 42%, var(--chart-1) 42% 72%, var(--chart-2) 72%);
+  content: '';
+}
+.brand-lockup {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.brand-mark {
+  display: grid;
+  height: 2.5rem;
+  width: 2.5rem;
+  place-items: center;
+  border-radius: 0.75rem;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  box-shadow: 0 8px 24px color-mix(in oklch, var(--primary) 20%, transparent);
+}
+.brand-name {
+  font-size: 1.05rem;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+.brand-name span {
+  color: var(--muted-foreground);
+  font-weight: 550;
+}
+.brand-subtitle {
+  margin-top: 0.15rem;
+  color: var(--muted-foreground);
+  font-size: 0.72rem;
+}
+.status-dot {
+  height: 0.45rem;
+  width: 0.45rem;
+  border-radius: 999px;
+  background: var(--success);
+}
+.context-button {
+  background: var(--card);
+  box-shadow: 0 1px 2px color-mix(in oklch, var(--foreground) 7%, transparent);
+}
+.nav-strip {
+  border-top: 1px solid color-mix(in oklch, var(--border) 70%, transparent);
+}
+.nav-link {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-bottom: 2px solid transparent;
+  padding: 0.8rem 1rem 0.7rem;
+  color: var(--muted-foreground);
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition:
+    color 150ms,
+    border-color 150ms;
+}
+.nav-link:hover {
+  background: color-mix(in oklch, var(--primary) 5%, transparent);
+  color: var(--primary);
+}
+.nav-link-active {
+  border-bottom-color: var(--primary);
+  color: var(--primary);
+}
+.overview-hero {
+  border-color: color-mix(in oklch, var(--primary) 20%, var(--border));
+  background: linear-gradient(120deg, color-mix(in oklch, var(--primary) 8%, var(--card)), var(--card) 58%);
+  box-shadow: 0 12px 32px color-mix(in oklch, var(--foreground) 6%, transparent);
+}
+.page-title {
+  position: relative;
+  padding-left: 1rem;
+}
+.page-title::before {
+  position: absolute;
+  inset: 0.1rem auto 0.1rem 0;
+  width: 3px;
+  border-radius: 999px;
+  background: linear-gradient(to bottom, var(--primary), var(--chart-1));
+  content: '';
+}
+.eyebrow {
+  color: var(--muted-foreground);
+  font-size: 0.7rem;
+  font-weight: 650;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.hero-health {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  border-radius: 0.75rem;
+  background: color-mix(in oklch, var(--success) 13%, var(--card));
+  color: var(--success);
+  padding: 0.85rem 1rem;
+}
+.metric-card {
+  position: relative;
+  min-height: 9.5rem;
+  overflow: hidden;
+  box-shadow: 0 4px 18px color-mix(in oklch, var(--foreground) 5%, transparent);
+}
+.metric-card::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--border);
+  content: '';
+}
+.metric-card-primary::before {
+  background: var(--primary);
+}
+.metric-card-danger::before {
+  background: var(--destructive);
+}
+.metric-icon {
+  display: grid;
+  height: 2rem;
+  width: 2rem;
+  place-items: center;
+  border-radius: 0.55rem;
+  background: var(--muted);
+  color: var(--muted-foreground);
+}
+.metric-card-primary .metric-icon {
+  background: color-mix(in oklch, var(--primary) 12%, var(--card));
+  color: var(--primary);
+}
+.metric-card-info::before {
+  background: var(--chart-1);
+}
+.metric-card-info .metric-icon {
+  background: color-mix(in oklch, var(--chart-1) 14%, var(--card));
+  color: color-mix(in oklch, var(--chart-1) 75%, var(--foreground));
+}
+.metric-card-success::before {
+  background: var(--success);
+}
+.metric-card-success .metric-icon {
+  background: color-mix(in oklch, var(--success) 12%, var(--card));
+  color: var(--success);
+}
+.metric-card-danger .metric-icon {
+  background: color-mix(in oklch, var(--destructive) 10%, var(--card));
+  color: var(--destructive);
+}
+.metric-value {
+  margin-top: 0.65rem;
+  font-size: clamp(1.45rem, 2vw, 2rem);
+  letter-spacing: -0.035em;
+}
+.workflow-step {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: start;
+  gap: 0.85rem;
+  padding: 1.35rem;
+  border-top: 1px solid var(--border);
+}
+.workflow-step + .workflow-step {
+  border-left: 1px solid var(--border);
+}
+.workflow-number {
+  color: var(--muted-foreground);
+  font-family: ui-monospace, monospace;
+  font-size: 0.7rem;
+}
+.workflow-icon {
+  display: grid;
+  height: 2.25rem;
+  width: 2.25rem;
+  place-items: center;
+  border-radius: 0.65rem;
+  background: color-mix(in oklch, var(--primary) 10%, var(--card));
+  color: var(--primary);
+}
+.workflow-step:nth-child(2) .workflow-icon {
+  background: color-mix(in oklch, var(--chart-1) 13%, var(--card));
+  color: color-mix(in oklch, var(--chart-1) 75%, var(--foreground));
+}
+.workflow-step:nth-child(3) .workflow-icon {
+  background: color-mix(in oklch, var(--chart-2) 12%, var(--card));
+  color: var(--chart-2);
+}
+.wizard-progress {
+  height: 0.3rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--muted);
+}
+.wizard-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--primary);
+  transition: width 180ms ease;
+}
+.source-table-list {
+  max-height: 22rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.5rem;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  background: color-mix(in oklch, var(--muted) 45%, var(--card));
+  padding: 0.5rem;
+}
+.source-table-option {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.6rem;
+  min-height: 2.75rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--card);
+  padding: 0.65rem 0.75rem;
+  color: var(--foreground);
+  text-align: left;
+}
+.source-table-option:hover {
+  background: var(--muted);
+}
+.source-table-option-selected {
+  border-color: color-mix(in oklch, var(--primary) 45%, var(--border));
+  background: color-mix(in oklch, var(--primary) 10%, var(--card));
+  color: var(--primary);
+}
+.mode-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  padding: 0.7rem 0.8rem;
+}
+.mode-field,
+.mode-toggle {
+  min-height: 4.5rem;
+}
+.mode-field {
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  padding: 0.7rem 0.8rem;
+}
+.mode-toggle small {
+  display: block;
+  margin-top: 0.15rem;
+  color: var(--muted-foreground);
+}
+@media (min-width: 48rem) {
+  .source-table-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (min-width: 75rem) {
+  .source-table-list {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.job-card {
+  box-shadow: 0 4px 18px color-mix(in oklch, var(--foreground) 5%, transparent);
+}
+.run-timeline {
+  display: grid;
+  grid-template-columns: repeat(10, minmax(0, 1fr));
+  gap: 0.35rem;
+  min-height: 2.75rem;
+  align-items: end;
+}
+.run-mark {
+  display: grid;
+  min-height: 2.25rem;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+.run-mark-success {
+  border-color: color-mix(in oklch, var(--success) 55%, var(--border));
+  background: color-mix(in oklch, var(--success) 18%, var(--card));
+  color: var(--success);
+}
+.run-mark-failed,
+.run-mark-timedout,
+.run-mark-canceled,
+.run-mark-internal_error {
+  border-color: color-mix(in oklch, var(--destructive) 55%, var(--border));
+  background: color-mix(in oklch, var(--destructive) 14%, var(--card));
+  color: var(--destructive);
+}
+.run-mark-pending,
+.run-mark-queued,
+.run-mark-terminating {
+  border-color: color-mix(in oklch, var(--primary) 50%, var(--border));
+  background: color-mix(in oklch, var(--primary) 12%, var(--card));
+  color: var(--primary);
+}
+.run-mark-running {
+  border-color: color-mix(in oklch, var(--success) 55%, var(--border));
+  background: color-mix(in oklch, var(--success) 18%, var(--card));
+  color: var(--success);
+}
+
+tbody tr {
+  transition: background-color 120ms ease;
+}
+tbody tr:hover {
+  background: color-mix(in oklch, var(--chart-1) 5%, var(--muted));
+}
+
+@media (max-width: 767px) {
+  .workflow-step + .workflow-step {
+    border-left: 0;
+  }
+  .hero-health {
+    width: 100%;
+  }
+}
+
+:root {
+  --radius: 0.625rem;
+  --background: oklch(0.99 0.004 220);
+  --foreground: oklch(0.2 0.025 225);
+  --card: oklch(1 0 0);
+  --card-foreground: var(--foreground);
+  --popover: oklch(1 0 0);
+  --popover-foreground: var(--foreground);
+  --primary: oklch(0.59 0.235 30);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.95 0.025 220);
+  --secondary-foreground: oklch(0.25 0.04 225);
+  --muted: oklch(0.965 0.012 220);
+  --muted-foreground: oklch(0.48 0.025 225);
+  --accent: oklch(0.94 0.045 210);
+  --accent-foreground: oklch(0.25 0.055 225);
+  --destructive: oklch(0.56 0.225 27);
+  --destructive-foreground: oklch(1 0 0);
+  --success: oklch(0.55 0.13 165);
+  --success-foreground: oklch(1 0 0);
+  --warning: oklch(0.78 0.15 80);
+  --warning-foreground: oklch(0.24 0.04 70);
+  --border: oklch(0.9 0.018 220);
+  --input: oklch(0.88 0.024 220);
+  --ring: var(--primary);
+  --chart-1: oklch(0.76 0.135 210);
+  --chart-2: oklch(0.49 0.135 265);
+  --chart-3: oklch(0.59 0.235 30);
+  --chart-4: oklch(0.55 0.13 165);
+  --chart-5: oklch(0.7 0.14 75);
+  --sidebar: var(--card);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: var(--accent);
+  --sidebar-accent-foreground: var(--accent-foreground);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: oklch(0.17 0.025 225);
+    --foreground: oklch(0.96 0.012 215);
+    --card: oklch(0.215 0.027 225);
+    --card-foreground: var(--foreground);
+    --popover: oklch(0.225 0.03 225);
+    --popover-foreground: var(--foreground);
+    --primary: oklch(0.68 0.21 31);
+    --primary-foreground: oklch(1 0 0);
+    --secondary: oklch(0.285 0.035 225);
+    --secondary-foreground: var(--foreground);
+    --muted: oklch(0.265 0.025 225);
+    --muted-foreground: oklch(0.73 0.025 215);
+    --accent: oklch(0.3 0.06 215);
+    --accent-foreground: oklch(0.95 0.025 210);
+    --destructive: oklch(0.68 0.2 25);
+    --destructive-foreground: oklch(1 0 0);
+    --success: oklch(0.7 0.13 165);
+    --success-foreground: oklch(0.15 0.025 165);
+    --warning: oklch(0.8 0.15 80);
+    --warning-foreground: oklch(0.2 0.03 75);
+    --border: oklch(0.35 0.025 225);
+    --input: oklch(0.38 0.03 225);
+    --ring: var(--primary);
+    --chart-1: oklch(0.78 0.13 210);
+    --chart-2: oklch(0.7 0.14 265);
+    --chart-3: oklch(0.68 0.21 31);
+    --chart-4: oklch(0.7 0.13 165);
+    --chart-5: oklch(0.78 0.14 75);
+    --sidebar: var(--card);
+    --sidebar-foreground: var(--foreground);
+    --sidebar-primary: var(--primary);
+    --sidebar-primary-foreground: var(--primary-foreground);
+    --sidebar-accent: var(--accent);
+    --sidebar-accent-foreground: var(--accent-foreground);
+    --sidebar-border: var(--border);
+    --sidebar-ring: var(--ring);
+  }
+}

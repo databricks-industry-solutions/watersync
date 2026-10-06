@@ -1,0 +1,11 @@
+resources:
+  apps:
+    watersync_control_plane:
+      name: ${var.app_name}
+      description: Configure and monitor Watersync JDBC pipelines.
+      source_code_path: ../app/watersync-control-plane
+      resources:
+        - name: sql-warehouse
+          sql_warehouse:
+            id: ${var.warehouse_id}
+            permission: CAN_USE
