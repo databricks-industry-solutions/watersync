@@ -1,0 +1,29 @@
+bundle:
+  name: watersync-control-plane
+
+variables:
+  sql_warehouse_id:
+    description: SQL Warehouse ID
+
+resources:
+  apps:
+    app:
+      name: 'watersync-control-plane'
+      description: 'Configure and monitor Watersync JDBC pipelines'
+      source_code_path: ./
+      # Uncomment to enable on behalf of user API scopes. Available scopes: sql, dashboards.genie, files.files, serving.serving-endpoints
+      # user_api_scopes:
+      #   - sql
+
+      # The resources which this app has access to.
+      resources:
+        - name: sql-warehouse
+          sql_warehouse:
+            id: ${var.sql_warehouse_id}
+            permission: CAN_USE
+
+targets:
+  default:
+    default: true
+    # Set the workspace with --profile / DATABRICKS_HOST and pass
+    # --var sql_warehouse_id=<warehouse-id> when deploying.

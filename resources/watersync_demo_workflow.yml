@@ -1,0 +1,9 @@
+resources:
+  jobs:
+    demo_workflow:
+      name: "WaterSync - Smoke Test (${var.environment})"
+      description: Installs the watersync package from the deployed bundle and runs the unit tests on serverless compute.
+      tasks:
+        - task_key: smoke_test
+          notebook_task:
+            notebook_path: ../tests/run_in_databricks.py

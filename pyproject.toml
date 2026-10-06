@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "watersync"
+version = "0.1.1"
+description = "Python package for JDBC ingestion, CDC SCD2 pipelines, and Databricks provisioning."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Emanuele Rinaldi" }]
+dependencies = [
+  "databricks-sdk>=0.120.0",
+]
+
+[project.optional-dependencies]
+lakebase = ["psycopg2-binary>=2.9.9"]
+zerobus = ["databricks-zerobus-ingest-sdk"]
+all = ["psycopg2-binary>=2.9.9", "databricks-zerobus-ingest-sdk"]
+
+[project.scripts]
+watersync-plan-configs = "watersync.cli:plan_configs_main"
+watersync-run-ingestion = "watersync.cli:run_ingestion_main"
+watersync-create-job = "watersync.cli:create_job_main"
+watersync-setup-lakebase = "watersync.cli:setup_lakebase_main"
+watersync-setup-uc = "watersync.cli:setup_uc_main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,27 +1,59 @@
-# Databricks Asset Bundle files
-.databricks/
-
-# IDE files
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS files
-.DS_Store
-Thumbs.db
-
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
+*.pyo
+*.pyd
+*.so
+*.egg
 *.egg-info/
 dist/
 build/
+.eggs/
+wheels/
+pip-wheel-metadata/
+MANIFEST
 
-# Jupyter Notebook checkpoints
-.ipynb_checkpoints/
-
-# Environment files
+# Virtual environments
+.venv/
+venv/
+env/
 .env
-.env.local 
+
+# Packaging / editable install artifacts
+src/*.egg-info/
+*.dist-info/
+
+# pytest / coverage
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+
+# Type checkers
+.mypy_cache/
+.pyright/
+.ruff_cache/
+
+# Databricks
+.databricks/
+*.dbx/
+bundle.yml.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Notebooks (keep .ipynb under notebooks/ only — ignore auto-generated ones)
+*.ipynb_checkpoints/
+
+# Secrets / local config — never commit
+*.env
+secrets.json
+.secrets/
+.env.local
+.ipynb_checkpoints/
