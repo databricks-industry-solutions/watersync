@@ -31,7 +31,7 @@
   "license": "Unlicensed",
   "description": "Configure and monitor Watersync JDBC pipelines",
   "dependencies": {
-    "@databricks/appkit": "0.38.1",
+    "@databricks/appkit": "0.81.0",
     "@databricks/appkit-ui": "0.38.1",
     "@databricks/sdk-experimental": "0.17.0",
     "clsx": "2.1.1",
