@@ -1,0 +1,6 @@
+-r tests/requirements.in
+py4j>=0.10.9.7,<0.10.9.10
+ruff
+# Build backend for the pyspark sdist (installed with --no-build-isolation).
+setuptools
+wheel

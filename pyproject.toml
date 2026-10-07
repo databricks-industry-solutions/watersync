@@ -10,13 +10,13 @@ readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Emanuele Rinaldi" }]
 dependencies = [
-  "databricks-sdk>=0.120.0",
+  "databricks-sdk>=0.120.0,<1",
 ]
 
 [project.optional-dependencies]
-lakebase = ["psycopg2-binary>=2.9.9"]
-zerobus = ["databricks-zerobus-ingest-sdk"]
-all = ["psycopg2-binary>=2.9.9", "databricks-zerobus-ingest-sdk"]
+lakebase = ["psycopg2-binary>=2.9.9,<3"]
+zerobus = ["databricks-zerobus-ingest-sdk>=1.10.0,<2"]
+all = ["psycopg2-binary>=2.9.9,<3", "databricks-zerobus-ingest-sdk>=1.10.0,<2"]
 
 [project.scripts]
 watersync-plan-configs = "watersync.cli:plan_configs_main"
@@ -30,3 +30,11 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.ruff]
+# Databricks notebooks rely on runtime globals (spark, dbutils, display).
+extend-exclude = ["notebooks", "tests/run_in_databricks.py", "app"]
+
+[tool.ruff.lint]
+# Correctness-only rules: syntax errors, undefined names, invalid comparisons.
+select = ["E9", "F63", "F7", "F82"]

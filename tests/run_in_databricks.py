@@ -7,7 +7,8 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install --quiet .. pytest
+# MAGIC %pip install --quiet --require-hashes --no-deps -r requirements.txt
+# MAGIC %pip install --quiet --no-deps ..
 
 # COMMAND ----------
 
