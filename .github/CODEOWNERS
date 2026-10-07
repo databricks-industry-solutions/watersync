@@ -1,0 +1,10 @@
+# Changes to CI, deployment config, and pinned dependencies need a code owner review.
+/.github/                 @erinaldidb
+/databricks.yml           @erinaldidb
+/resources/               @erinaldidb
+/pyproject.toml           @erinaldidb
+/requirements-*           @erinaldidb
+/tests/requirements.*     @erinaldidb
+/tests/run_in_databricks.py @erinaldidb
+/app/watersync-control-plane/package.json      @erinaldidb
+/app/watersync-control-plane/package-lock.json @erinaldidb

@@ -72,7 +72,7 @@ databricks bundle deploy --profile production
 ### Install Dependencies
 
 ```bash
-npm install
+npm ci
 ```
 
 ### Development
