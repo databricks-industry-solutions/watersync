@@ -32,7 +32,7 @@
   "description": "Configure and monitor Watersync JDBC pipelines",
   "dependencies": {
     "@databricks/appkit": "0.38.1",
-    "@databricks/appkit-ui": "0.38.1",
+    "@databricks/appkit-ui": "0.81.0",
     "@databricks/sdk-experimental": "0.17.0",
     "clsx": "2.1.1",
     "embla-carousel-react": "8.6.0",
