@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Request, Response } from 'express';
-import { userContext, workspace } from './auth.js';
+import { requiredScopes, scopeStatus, tokenScopes, userContext, workspace } from './auth.js';
 
 const fakeRequest = (headers: Record<string, string> = {}) =>
   ({ method: 'POST', path: '/api/jobs', headers }) as unknown as Request;
@@ -58,5 +58,55 @@ describe('userContext', () => {
     vi.stubEnv('NODE_ENV', 'production');
 
     expect(() => workspace()).toThrow(/No user context/);
+  });
+});
+
+const jwt = (claims: Record<string, unknown>) =>
+  ['header', Buffer.from(JSON.stringify(claims)).toString('base64url'), 'signature'].join('.');
+
+describe('tokenScopes', () => {
+  it('reads a space separated scope claim', () => {
+    expect(tokenScopes(jwt({ scope: 'sql jobs offline_access' }))).toEqual(['sql', 'jobs', 'offline_access']);
+  });
+
+  it('reads an array scp claim', () => {
+    expect(tokenScopes(jwt({ scp: ['sql', 'pipelines'] }))).toEqual(['sql', 'pipelines']);
+  });
+
+  it('returns undefined for tokens that are not JWTs', () => {
+    expect(tokenScopes('dapi-not-a-jwt')).toBeUndefined();
+  });
+});
+
+describe('scopeStatus', () => {
+  it('flags the required scopes the token does not carry', () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    const status = scopeStatus(jwt({ scope: 'sql jobs pipelines clusters workspace' }));
+
+    expect(status.mode).toBe('user');
+    expect(status.scopes.filter((item) => !item.granted).map((item) => item.scope)).toEqual(['unity-catalog']);
+  });
+
+  it('treats all-apis as granting every scope', () => {
+    const status = scopeStatus(jwt({ scope: 'all-apis' }));
+
+    expect(status.scopes.every((item) => item.granted)).toBe(true);
+  });
+
+  it('reports every scope as missing when user authorization is off in production', () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    const status = scopeStatus(undefined);
+
+    expect(status.mode).toBe('missing-token');
+    expect(status.scopes).toHaveLength(requiredScopes.length);
+    expect(status.scopes.every((item) => item.granted === false)).toBe(true);
+  });
+
+  it('does not report missing scopes in local development', () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    const status = scopeStatus(undefined);
+
+    expect(status.mode).toBe('development');
+    expect(status.scopes.some((item) => item.granted === false)).toBe(false);
   });
 });

@@ -48,6 +48,86 @@ export const userContext = (): RequestHandler => (req, res, next) => {
   userClients.run(client, next);
 };
 
+/**
+ * The user_api_scopes the app needs (keep in sync with databricks.yml and resources/watersync_app.yml),
+ * with what each one enables and what stops working without it.
+ */
+export const requiredScopes = [
+  {
+    scope: 'sql',
+    usedFor:
+      'Run SQL on the warehouse: dashboards, configuration and watermark reads and writes, schema migrations, and source discovery.',
+    impactIfMissing: 'Pages show no data and saving configuration or watermarks fails.',
+  },
+  {
+    scope: 'unity-catalog',
+    usedFor: 'Read Unity Catalog secrets (uc_secret_name) to open temporary source discovery connections.',
+    impactIfMissing: 'Source table and column discovery fails for configurations that use a UC secret.',
+  },
+  {
+    scope: 'jobs',
+    usedFor: 'List, create, update, run, and schedule the ingestion jobs.',
+    impactIfMissing: 'The Jobs page is empty and jobs cannot be saved, run, or scheduled.',
+  },
+  {
+    scope: 'pipelines',
+    usedFor: 'Create and update the CDC SCD2 pipeline for incremental or auto CDC sources.',
+    impactIfMissing: 'Saving a job fails for ingestion groups that need a CDC pipeline.',
+  },
+  {
+    scope: 'clusters',
+    usedFor: 'List node types for classic job and pipeline compute.',
+    impactIfMissing: 'Node type choices for classic compute cannot be loaded.',
+  },
+  {
+    scope: 'workspace',
+    usedFor: 'Write the CDC pipeline bootstrap file under /Shared/watersync-generated-pipelines.',
+    impactIfMissing: 'Creating or updating the CDC pipeline fails.',
+  },
+] as const;
+
+/** Scopes carried by a Databricks OAuth access token (a JWT), or undefined if it cannot be read. */
+export const tokenScopes = (token: string) => {
+  const payload = token.split('.')[1];
+  if (!payload) return undefined;
+  try {
+    const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as Record<string, unknown>;
+    const claim = claims.scope ?? claims.scp;
+    if (typeof claim === 'string') return claim.split(/\s+/).filter(Boolean);
+    if (Array.isArray(claim)) return claim.filter((value): value is string => typeof value === 'string');
+  } catch {
+    // Not a JWT; scopes are unknown.
+  }
+  return undefined;
+};
+
+export type ScopeStatus = {
+  /** `user`: token inspected; `development`: local run without a token; `missing-token`: user authorization is off. */
+  mode: 'user' | 'development' | 'missing-token';
+  scopes: Array<(typeof requiredScopes)[number] & { granted: boolean | null }>;
+};
+
+/** Compares the forwarded user token's scopes with the scopes the app requires. */
+export const scopeStatus = (header: string | string[] | undefined): ScopeStatus => {
+  const token = forwardedToken(header);
+  if (!token) {
+    const mode = isDevelopment() ? 'development' : 'missing-token';
+    return {
+      mode,
+      scopes: requiredScopes.map((item) => ({ ...item, granted: mode === 'development' ? null : false })),
+    };
+  }
+  const granted = tokenScopes(token);
+  const allApis = granted?.includes('all-apis') ?? false;
+  return {
+    mode: 'user',
+    scopes: requiredScopes.map((item) => ({
+      ...item,
+      granted: granted ? allApis || granted.includes(item.scope) : null,
+    })),
+  };
+};
+
 /** The WorkspaceClient for the user making the current request. */
 export const workspace = () => {
   const client = userClients.getStore();
