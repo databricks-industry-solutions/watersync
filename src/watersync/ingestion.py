@@ -36,6 +36,11 @@ class JdbcIngestionConfigRepository:
             filters.append(f"ingestion_group = '{quote_sql_string(ingestion_group)}'")
         if source_table_name:
             filters.append(f"source_table_name = '{quote_sql_string(source_table_name)}'")
+        # connection_database was added later; tolerate config tables that have not been migrated yet.
+        config_columns = {field.name for field in self.spark.table(self.runtime.config_table).schema.fields}
+        connection_database = (
+            "connection_database" if "connection_database" in config_columns else "NULL AS connection_database"
+        )
 
         query = f"""
             SELECT
@@ -51,7 +56,8 @@ class JdbcIngestionConfigRepository:
                 epic_csa_enabled,
                 auto_cdc_from_snapshot,
                 jdbc_url, jdbc_user, jdbc_secret_scope, jdbc_secret_key, uc_secret_name,
-                connection_name, watermark_threshold_minutes, fetch_size, num_partitions
+                connection_name, {connection_database},
+                watermark_threshold_minutes, fetch_size, num_partitions
             FROM {self.runtime.config_table}
             WHERE {' AND '.join(filters)}
             ORDER BY ingestion_group, source_table_name
@@ -84,6 +90,7 @@ class JdbcIngestionConfigRepository:
                 jdbc_secret_key=normalize_text(row_dict.get("jdbc_secret_key")),
                 uc_secret_name=normalize_text(row_dict.get("uc_secret_name")),
                 connection_name=normalize_text(row_dict.get("connection_name")),
+                connection_database=normalize_text(row_dict.get("connection_database")),
                 watermark_threshold_minutes=int(row_dict.get("watermark_threshold_minutes") or 5),
                 fetch_size=int(row_dict.get("fetch_size") or 10000),
                 num_partitions=int(row_dict.get("num_partitions") or 8),

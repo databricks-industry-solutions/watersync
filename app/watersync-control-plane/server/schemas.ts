@@ -27,6 +27,7 @@ export const configSchema = locationSchema
     jdbcSecretKey: z.string().nullable().optional(),
     ucSecretName: z.string().nullable().optional(),
     connectionName: z.string().nullable().optional(),
+    connectionDatabase: z.string().nullable().optional(),
     watermarkThresholdMinutes: z.number().int().nonnegative(),
     fetchSize: z.number().int().positive(),
     numPartitions: z.number().int().positive(),
@@ -153,16 +154,77 @@ export const computeSchema = z
       });
     }
   });
+export const pipelineComputeSchema = z
+  .object({
+    mode: z.enum(['SERVERLESS', 'CLASSIC']),
+    nodeTypeId: z.string().trim().optional().default(''),
+    driverNodeTypeId: z.string().trim().optional().default(''),
+    minWorkers: z.number().int().min(0).optional().default(1),
+    maxWorkers: z.number().int().min(1).optional().default(4),
+    photon: z.boolean().optional().default(false),
+  })
+  .superRefine((value, context) => {
+    if (value.mode !== 'CLASSIC') return;
+    for (const [field, fieldValue] of [
+      ['nodeTypeId', value.nodeTypeId],
+      ['driverNodeTypeId', value.driverNodeTypeId],
+    ] as const) {
+      if (!fieldValue) context.addIssue({ code: 'custom', path: [field], message: 'Required for classic pipeline compute' });
+    }
+    if (value.maxWorkers < value.minWorkers) {
+      context.addIssue({
+        code: 'custom',
+        path: ['maxWorkers'],
+        message: 'Maximum workers must be at least the minimum',
+      });
+    }
+  });
+const runAsPrincipalIssue = (mode: string, principal: string) => {
+  if (mode === 'USER' && !/^[^\s@]+@[^\s@]+$/.test(principal)) return 'Enter the user email';
+  if (mode === 'SERVICE_PRINCIPAL' && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(principal)) {
+    return 'Enter the service principal application ID';
+  }
+  return null;
+};
+// DEFAULT leaves run_as unset so the resource runs as its owner (the app service principal that creates it).
+const runAsTargetSchema = <T extends readonly [string, ...string[]]>(modes: T) =>
+  z
+    .object({ mode: z.enum(modes), principal: z.string().trim().optional().default('') })
+    .superRefine((value, context) => {
+      const issue = runAsPrincipalIssue(value.mode, value.principal);
+      if (issue) context.addIssue({ code: 'custom', path: ['principal'], message: issue });
+    });
+export const runAsSchema = z.object({
+  job: runAsTargetSchema(['DEFAULT', 'USER', 'SERVICE_PRINCIPAL'] as const).prefault({ mode: 'DEFAULT' }),
+  pipeline: runAsTargetSchema(['SAME_AS_JOB', 'DEFAULT', 'USER', 'SERVICE_PRINCIPAL'] as const).prefault({
+    mode: 'SAME_AS_JOB',
+  }),
+});
+export type RunAsTarget = { mode: string; principal: string };
+export const toRunAs = (target: RunAsTarget) =>
+  target.mode === 'USER'
+    ? { user_name: target.principal }
+    : target.mode === 'SERVICE_PRINCIPAL'
+      ? { service_principal_name: target.principal }
+      : undefined;
 export const jobPayloadSchema = locationSchema.extend({
   ingestionGroup: z.string().min(1),
   gitUrl: z.url().refine((value) => new URL(value).hostname === 'github.com', 'Repository must be hosted on GitHub'),
-  gitBranch: z.string().trim().min(1),
+  gitBranch: z
+    .string()
+    .trim()
+    .min(1)
+    // The branch ends up in a pip requirement (and a %pip line for classic pipelines).
+    .regex(/^[^\s"'`\\]+$/, 'Branch must not contain whitespace, quotes or backslashes'),
   foreachConcurrency: z.number().int().min(1).max(100),
   cdcPipelineId: z.string().trim().nullable().optional(),
   schedule: scheduleSchema,
   compute: computeSchema,
+  pipelineCompute: pipelineComputeSchema.prefault({ mode: 'SERVERLESS' }),
+  runAs: runAsSchema.prefault({}),
 });
 export const jobSchedulePayloadSchema = scheduleSchema.extend({ jobId: z.number().int().positive() });
 
 export type SourceDiscovery = z.infer<typeof sourceDiscoverySchema>;
 export type SourceDatabaseType = z.infer<typeof sourceDatabaseType>;
+export type PipelineCompute = z.infer<typeof pipelineComputeSchema>;

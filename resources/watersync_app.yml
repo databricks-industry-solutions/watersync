@@ -11,6 +11,7 @@ resources:
         - unity-catalog
         - jobs
         - pipelines
+        - clusters
         - workspace
       resources:
         - name: sql-warehouse

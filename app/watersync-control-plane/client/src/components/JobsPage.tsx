@@ -27,6 +27,7 @@ import {
   SelectTrigger,
   SelectValue,
   Skeleton,
+  Switch,
   Tabs,
   TabsContent,
   TabsList,
@@ -295,11 +296,43 @@ function JobDialog({
   const [gitUrl, setGitUrl] = useState('https://github.com/databricks-industry-solutions/watersync');
   const [gitBranch, setGitBranch] = useState('main');
   const [computeMode, setComputeMode] = useState<'SERVERLESS' | 'JOB_CLUSTER'>('SERVERLESS');
-  const [performanceTarget, setPerformanceTarget] = useState<'STANDARD' | 'PERFORMANCE_OPTIMIZED'>('STANDARD');
+  const [performanceTarget, setPerformanceTarget] = useState<PerformanceTarget>('STANDARD');
+  const [tab, setTab] = useState('job');
+  const [pipelineComputeMode, setPipelineComputeMode] = useState<'SERVERLESS' | 'CLASSIC'>('SERVERLESS');
+  const [pipelinePhoton, setPipelinePhoton] = useState(false);
+  const [jobRunAsMode, setJobRunAsMode] = useState('DEFAULT');
+  const [pipelineRunAsMode, setPipelineRunAsMode] = useState('SAME_AS_JOB');
+  const [nodeTypes, setNodeTypes] = useState<{ nodeTypeIds: string[]; defaultNodeTypeId: string | null } | null>(
+    null
+  );
+  useEffect(() => {
+    if (!open || (computeMode !== 'JOB_CLUSTER' && pipelineComputeMode !== 'CLASSIC') || nodeTypes) return;
+    // Best effort: without the list the node type fields stay empty and must be filled in manually.
+    api<{ nodeTypeIds: string[]; defaultNodeTypeId: string | null }>('/api/node-types')
+      .then(setNodeTypes)
+      .catch(() => setNodeTypes({ nodeTypeIds: [], defaultNodeTypeId: null }));
+  }, [open, computeMode, pipelineComputeMode, nodeTypes]);
+  // Inactive tabs are hidden, so the browser cannot focus an invalid field there and blocks the submit
+  // silently. Reveal the tab holding the first invalid field and say what is missing.
+  const revealInvalidField = (event: FormEvent<HTMLFormElement>) => {
+    const field = event.target as HTMLInputElement;
+    // The invalid event fires once per invalid field; report only the first one.
+    if (event.currentTarget.querySelector(':invalid') !== field) return;
+    const fieldTab = field.closest<HTMLElement>('[data-tab]')?.dataset.tab;
+    if (fieldTab) setTab(fieldTab);
+    const label = field.labels?.[0]?.textContent ?? field.getAttribute('aria-label') ?? field.name;
+    setError(`Check "${label}": ${field.validationMessage}`);
+  };
   useEffect(() => {
     if (open && !ingestionGroup && groups[0]) setIngestionGroup(groups[0].ingestion_group);
   }, [open, ingestionGroup, groups]);
   const selectedGroup = groups.find((group) => group.ingestion_group === ingestionGroup);
+  const hasCdcPipeline = Boolean(selectedGroup?.enabled_incremental_source_count);
+  const tabCount = 5 + (hasCdcPipeline ? 1 : 0);
+  // Leave the SDP Compute tab when it disappears after switching to a group without an SDP pipeline.
+  useEffect(() => {
+    if (tab === 'pipeline' && !hasCdcPipeline) setTab('compute');
+  }, [tab, hasCdcPipeline]);
   const submit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setBusy(true);
@@ -330,6 +363,21 @@ function JobDialog({
             minWorkers: Number(form.get('minWorkers') ?? 1),
             maxWorkers: Number(form.get('maxWorkers') ?? 4),
           },
+          pipelineCompute:
+            pipelineComputeMode === 'CLASSIC'
+              ? {
+                  mode: pipelineComputeMode,
+                  nodeTypeId: formString(form, 'pipelineNodeTypeId', ''),
+                  driverNodeTypeId: formString(form, 'pipelineDriverNodeTypeId', ''),
+                  minWorkers: Number(form.get('pipelineMinWorkers') ?? 1),
+                  maxWorkers: Number(form.get('pipelineMaxWorkers') ?? 4),
+                  photon: pipelinePhoton,
+                }
+              : { mode: pipelineComputeMode },
+          runAs: {
+            job: { mode: jobRunAsMode, principal: formString(form, 'jobRunAsPrincipal', '') },
+            pipeline: { mode: pipelineRunAsMode, principal: formString(form, 'pipelineRunAsPrincipal', '') },
+          },
         }),
       });
       alert(`Job ${result.jobId} ${result.action}`);
@@ -349,18 +397,26 @@ function JobDialog({
             Select a configured ingestion group. WaterSync generates the parameters and task graph automatically.
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={(event) => void submit(event)} className="space-y-4">
+        <form
+          onSubmit={(event) => void submit(event)}
+          onInvalidCapture={revealInvalidField}
+          className="space-y-4"
+        >
           {error && <ErrorState message={error} />}
           {groupsError && <ErrorState message={groupsError} />}
-          <Tabs defaultValue="job" className="w-full">
-            <TabsList className={`grid w-full ${computeMode === 'JOB_CLUSTER' ? 'grid-cols-5' : 'grid-cols-4'}`}>
+          <datalist id="node-type-options">
+            {nodeTypes?.nodeTypeIds.map((id) => <option key={id} value={id} />)}
+          </datalist>
+          <Tabs value={tab} onValueChange={setTab} className="w-full">
+            <TabsList className={`grid w-full ${tabColumns[tabCount]}`}>
               <TabsTrigger value="job">Job configuration</TabsTrigger>
               <TabsTrigger value="source">Git source &amp; execution</TabsTrigger>
-              <TabsTrigger value="compute">Compute</TabsTrigger>
-              {computeMode === 'JOB_CLUSTER' && <TabsTrigger value="cluster">Job cluster</TabsTrigger>}
+              <TabsTrigger value="compute">Job Compute</TabsTrigger>
+              {hasCdcPipeline && <TabsTrigger value="pipeline">SDP Compute</TabsTrigger>}
               <TabsTrigger value="schedule">Schedule</TabsTrigger>
+              <TabsTrigger value="run-as">Run as</TabsTrigger>
             </TabsList>
-            <TabsContent value="job" forceMount className="mt-4 space-y-4 data-[state=inactive]:hidden">
+            <TabsContent value="job" data-tab="job" forceMount className="mt-4 space-y-4 data-[state=inactive]:hidden">
               <div className="space-y-2">
                 <Label htmlFor="ingestion-group">Ingestion group</Label>
                 {groupsLoading ? (
@@ -417,7 +473,7 @@ function JobDialog({
                 </Card>
               )}
             </TabsContent>
-            <TabsContent value="source" forceMount className="mt-4 data-[state=inactive]:hidden">
+            <TabsContent value="source" data-tab="source" forceMount className="mt-4 data-[state=inactive]:hidden">
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2 md:col-span-2">
                   <Label htmlFor="git-url">GitHub repository URL</Label>
@@ -453,20 +509,20 @@ function JobDialog({
                   />
                 </div>
                 <div className="space-y-2 md:col-span-2">
-                  <Label htmlFor="pipeline-id">Existing CDC pipeline ID (optional)</Label>
+                  <Label htmlFor="pipeline-id">Existing SDP pipeline ID (optional)</Label>
                   <Input
                     id="pipeline-id"
                     name="cdcPipelineId"
                     placeholder={
                       selectedGroup?.enabled_incremental_source_count
-                        ? 'Leave blank to create or reuse the group CDC pipeline'
+                        ? 'Leave blank to create or reuse the group SDP pipeline'
                         : 'Not required: this group has no enabled incremental tables'
                     }
                     disabled={!selectedGroup?.enabled_incremental_source_count}
                   />
                   {!selectedGroup?.enabled_incremental_source_count && (
                     <p className="text-xs text-muted-foreground">
-                      The CDC declarative pipeline task will be omitted for this ingestion group.
+                      The SDP pipeline task will be omitted for this ingestion group.
                     </p>
                   )}
                   {Boolean(selectedGroup?.enabled_incremental_source_count) && (
@@ -486,7 +542,7 @@ function JobDialog({
                 </div>
               </div>
             </TabsContent>
-            <TabsContent value="schedule" forceMount className="mt-4 data-[state=inactive]:hidden">
+            <TabsContent value="schedule" data-tab="schedule" forceMount className="mt-4 data-[state=inactive]:hidden">
               <ScheduleFields
                 enabled={scheduleEnabled}
                 onEnabledChange={setScheduleEnabled}
@@ -494,7 +550,38 @@ function JobDialog({
                 onActiveChange={setScheduleActive}
               />
             </TabsContent>
-            <TabsContent value="compute" forceMount className="mt-4 data-[state=inactive]:hidden">
+            <TabsContent value="run-as" data-tab="run-as" forceMount className="mt-4 data-[state=inactive]:hidden">
+              <div className="grid gap-4 md:grid-cols-2">
+                <RunAsFields
+                  id="job-run-as"
+                  label="Job runs as"
+                  mode={jobRunAsMode}
+                  onModeChange={setJobRunAsMode}
+                  principalName="jobRunAsPrincipal"
+                />
+                {hasCdcPipeline ? (
+                  <RunAsFields
+                    id="pipeline-run-as"
+                    label="SDP runs as"
+                    mode={pipelineRunAsMode}
+                    onModeChange={setPipelineRunAsMode}
+                    principalName="pipelineRunAsPrincipal"
+                    allowSameAsJob
+                  />
+                ) : (
+                  <p className="self-end text-xs text-muted-foreground">
+                    This group has no SDP pipeline, so only the job identity applies.
+                  </p>
+                )}
+                <p className="text-xs text-muted-foreground md:col-span-2">
+                  The owner is the app service principal that creates the job and SDP pipeline. Running as another user
+                  requires workspace admin rights for the app; running as another service principal requires the app to
+                  have the Service Principal User role on it. The SDP setting is ignored when an existing SDP
+                  pipeline ID is provided.
+                </p>
+              </div>
+            </TabsContent>
+            <TabsContent value="compute" data-tab="compute" forceMount className="mt-4 data-[state=inactive]:hidden">
               <div className="space-y-4">
                 <div className="space-y-2">
                   <Label htmlFor="compute-mode">Compute mode</Label>
@@ -509,70 +596,144 @@ function JobDialog({
                   </Select>
                 </div>
                 {computeMode === 'SERVERLESS' && (
-                  <div className="space-y-2">
-                    <Label htmlFor="performance-target">Serverless performance mode</Label>
-                    <Select
-                      value={performanceTarget}
-                      onValueChange={(value) => setPerformanceTarget(value as typeof performanceTarget)}
-                    >
-                      <SelectTrigger id="performance-target" className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="STANDARD">Standard</SelectItem>
-                        <SelectItem value="PERFORMANCE_OPTIMIZED">Performance optimized</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <p className="text-xs text-muted-foreground">
-                      Standard favors cost efficiency; performance optimized favors faster startup and execution.
+                  <PerformanceTargetField
+                    id="performance-target"
+                    value={performanceTarget}
+                    onChange={setPerformanceTarget}
+                    sharedWith={hasCdcPipeline && pipelineComputeMode === 'SERVERLESS' ? 'SDP Compute' : null}
+                  />
+                )}
+                {computeMode === 'JOB_CLUSTER' && (
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2 md:col-span-2">
+                      <Label htmlFor="spark-version">Databricks Runtime</Label>
+                      <Input
+                        id="spark-version"
+                        name="sparkVersion"
+                        defaultValue="18.x-scala2.13"
+                        placeholder="18.x-scala2.13"
+                        required
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="driver-node-type">Driver node type</Label>
+                      <Input
+                        key={`driver-${nodeTypes?.defaultNodeTypeId ?? ''}`}
+                        id="driver-node-type"
+                        name="driverNodeTypeId"
+                        list="node-type-options"
+                        defaultValue={nodeTypes?.defaultNodeTypeId ?? ''}
+                        placeholder={nodeTypes ? 'For example: i3.xlarge' : 'Loading node types\u2026'}
+                        required
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="worker-node-type">Worker node type</Label>
+                      <Input
+                        key={`worker-${nodeTypes?.defaultNodeTypeId ?? ''}`}
+                        id="worker-node-type"
+                        name="workerNodeTypeId"
+                        list="node-type-options"
+                        defaultValue={nodeTypes?.defaultNodeTypeId ?? ''}
+                        placeholder={nodeTypes ? 'For example: i3.xlarge' : 'Loading node types\u2026'}
+                        required
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="min-workers">Minimum workers</Label>
+                      <Input id="min-workers" name="minWorkers" type="number" min="0" defaultValue="1" required />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="max-workers">Maximum workers</Label>
+                      <Input id="max-workers" name="maxWorkers" type="number" min="1" defaultValue="4" required />
+                    </div>
+                    <p className="text-xs text-muted-foreground md:col-span-2">
+                      The planner and ingestion workers share this autoscaling job cluster. The SDP pipeline task uses its
+                      own pipeline compute.
                     </p>
                   </div>
                 )}
               </div>
             </TabsContent>
-            {computeMode === 'JOB_CLUSTER' && (
-              <TabsContent value="cluster" forceMount className="mt-4 data-[state=inactive]:hidden">
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="space-y-2 md:col-span-2">
-                    <Label htmlFor="spark-version">Databricks Runtime</Label>
-                    <Input
-                      id="spark-version"
-                      name="sparkVersion"
-                      defaultValue="18.x-scala2.13"
-                      placeholder="18.x-scala2.13"
-                      required
+            {hasCdcPipeline && (
+              <TabsContent value="pipeline" data-tab="pipeline" forceMount className="mt-4 data-[state=inactive]:hidden">
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="pipeline-compute-mode">SDP compute</Label>
+                    <Select
+                      value={pipelineComputeMode}
+                      onValueChange={(value) => setPipelineComputeMode(value as typeof pipelineComputeMode)}
+                    >
+                      <SelectTrigger id="pipeline-compute-mode" className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="SERVERLESS">Serverless</SelectItem>
+                        <SelectItem value="CLASSIC">Classic autoscaling cluster</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      Applies to the SDP pipeline WaterSync creates or updates for this group. It is ignored when an
+                      existing SDP pipeline ID is provided.
+                    </p>
+                  </div>
+                  {pipelineComputeMode === 'SERVERLESS' && (
+                    <PerformanceTargetField
+                      id="pipeline-performance-target"
+                      value={performanceTarget}
+                      onChange={setPerformanceTarget}
+                      sharedWith={computeMode === 'SERVERLESS' ? 'Job Compute' : null}
                     />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="driver-node-type">Driver node type</Label>
-                    <Input
-                      id="driver-node-type"
-                      name="driverNodeTypeId"
-                      placeholder="For example: i3.xlarge"
-                      required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="worker-node-type">Worker node type</Label>
-                    <Input
-                      id="worker-node-type"
-                      name="workerNodeTypeId"
-                      placeholder="For example: i3.xlarge"
-                      required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="min-workers">Minimum workers</Label>
-                    <Input id="min-workers" name="minWorkers" type="number" min="0" defaultValue="1" required />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="max-workers">Maximum workers</Label>
-                    <Input id="max-workers" name="maxWorkers" type="number" min="1" defaultValue="4" required />
-                  </div>
-                  <p className="text-xs text-muted-foreground md:col-span-2">
-                    The planner and ingestion workers share this autoscaling job cluster. The CDC pipeline task uses its
-                    own pipeline compute.
-                  </p>
+                  )}
+                  {pipelineComputeMode === 'CLASSIC' && (
+                    <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="pipeline-node-type">Pipeline worker node type</Label>
+                      <Input
+                        key={`pipeline-worker-${nodeTypes?.defaultNodeTypeId ?? ''}`}
+                        id="pipeline-node-type"
+                        name="pipelineNodeTypeId"
+                        list="node-type-options"
+                        defaultValue={nodeTypes?.defaultNodeTypeId ?? ''}
+                        placeholder={nodeTypes ? 'For example: i3.xlarge' : 'Loading node types\u2026'}
+                        required
+                      />
+                    </div>
+                        <div className="space-y-2">
+                      <Label htmlFor="pipeline-driver-node-type">Pipeline driver node type</Label>
+                      <Input
+                        key={`pipeline-driver-${nodeTypes?.defaultNodeTypeId ?? ''}`}
+                        id="pipeline-driver-node-type"
+                        name="pipelineDriverNodeTypeId"
+                        list="node-type-options"
+                        defaultValue={nodeTypes?.defaultNodeTypeId ?? ''}
+                        placeholder={nodeTypes ? 'For example: i3.xlarge' : 'Loading node types\u2026'}
+                        required
+                      />
+                    </div>
+                        <div className="space-y-2">
+                      <Label htmlFor="pipeline-min-workers">Pipeline minimum workers</Label>
+                      <Input id="pipeline-min-workers" name="pipelineMinWorkers" type="number" min="0" defaultValue="1" required />
+                    </div>
+                        <div className="space-y-2">
+                      <Label htmlFor="pipeline-max-workers">Pipeline maximum workers</Label>
+                      <Input id="pipeline-max-workers" name="pipelineMaxWorkers" type="number" min="1" defaultValue="4" required />
+                    </div>
+                          <div className="flex items-center gap-2 md:col-span-2">
+                        <Switch
+                          id="pipeline-photon"
+                          checked={pipelinePhoton}
+                          onCheckedChange={setPipelinePhoton}
+                          aria-label="Use Photon for the SDP pipeline"
+                        />
+                        <Label htmlFor="pipeline-photon">Use Photon</Label>
+                      </div>
+                      <p className="text-xs text-muted-foreground md:col-span-2">
+                        Classic pipelines run on the Advanced edition and install WaterSync from the Git source with
+                        %pip when the pipeline starts.
+                      </p>
+                    </div>
+                  )}
                 </div>
               </TabsContent>
             )}
@@ -588,6 +749,89 @@ function JobDialog({
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+type PerformanceTarget = 'STANDARD' | 'PERFORMANCE_OPTIMIZED';
+
+function PerformanceTargetField({
+  id,
+  value,
+  onChange,
+  sharedWith,
+}: {
+  id: string;
+  value: PerformanceTarget;
+  onChange: (value: PerformanceTarget) => void;
+  sharedWith: string | null;
+}) {
+  return (
+    <div className="space-y-2">
+      <Label htmlFor={id}>Serverless performance mode</Label>
+      <Select value={value} onValueChange={(next) => onChange(next as PerformanceTarget)}>
+        <SelectTrigger id={id} className="w-full">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="STANDARD">Standard</SelectItem>
+          <SelectItem value="PERFORMANCE_OPTIMIZED">Performance optimized</SelectItem>
+        </SelectContent>
+      </Select>
+      <p className="text-xs text-muted-foreground">
+        Standard favors cost efficiency; performance optimized favors faster startup and execution.
+        {sharedWith &&
+          ` Databricks applies one serverless performance mode per job, so this setting is shared with ${sharedWith}.`}
+      </p>
+    </div>
+  );
+}
+
+// Literal class names so Tailwind keeps them.
+const tabColumns: Record<number, string> = { 5: 'grid-cols-5', 6: 'grid-cols-6' };
+
+function RunAsFields({
+  id,
+  label,
+  mode,
+  onModeChange,
+  principalName,
+  allowSameAsJob = false,
+}: {
+  id: string;
+  label: string;
+  mode: string;
+  onModeChange: (value: string) => void;
+  principalName: string;
+  allowSameAsJob?: boolean;
+}) {
+  return (
+    <div className="space-y-2">
+      <Label htmlFor={id}>{label}</Label>
+      <Select value={mode} onValueChange={onModeChange}>
+        <SelectTrigger id={id} className="w-full">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {allowSameAsJob && <SelectItem value="SAME_AS_JOB">Same as job</SelectItem>}
+          <SelectItem value="DEFAULT">Owner (app service principal)</SelectItem>
+          <SelectItem value="USER">User</SelectItem>
+          <SelectItem value="SERVICE_PRINCIPAL">Service principal</SelectItem>
+        </SelectContent>
+      </Select>
+      {(mode === 'USER' || mode === 'SERVICE_PRINCIPAL') && (
+        <Input
+          key={mode}
+          id={`${id}-principal`}
+          name={principalName}
+          aria-label={mode === 'USER' ? `${label}: user email` : `${label}: service principal application ID`}
+          type={mode === 'USER' ? 'email' : 'text'}
+          pattern={mode === 'SERVICE_PRINCIPAL' ? '[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}' : undefined}
+          title={mode === 'SERVICE_PRINCIPAL' ? 'Service principal application ID (UUID)' : undefined}
+          placeholder={mode === 'USER' ? 'user@example.com' : 'Application ID, e.g. 00000000-0000-0000-0000-000000000000'}
+          required
+        />
+      )}
+    </div>
   );
 }
 

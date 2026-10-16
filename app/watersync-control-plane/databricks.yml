@@ -18,6 +18,7 @@ resources:
         - unity-catalog
         - jobs
         - pipelines
+        - clusters
         - workspace
 
       # The resources which this app has access to.

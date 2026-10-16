@@ -37,6 +37,7 @@ The config table FQN follows the pattern `<catalog>.<schema>.jdbc_ingestion_conf
 | `num_partitions` | INT | ✅ | Number of parallel JDBC read partitions (default: `8`). |
 | `update_dttm` | TIMESTAMP | Auto | Set to `current_timestamp()` on insert/update. |
 | `enabled` | BOOLEAN | ✅ | `true` to include in ingestion runs, `false` to skip. |
+| `connection_database` | STRING | Optional | Only with `connection_name`: database to read instead of the connection's default (Oracle: service name). The UC connection must allow-list the `database` / `service_name` option. |
 
 ## Connection methods
 
@@ -44,7 +45,7 @@ Every config row must use **one** of two connection methods:
 
 ### Option A — Unity Catalog Connection (preferred)
 
-Set `connection_name` to a UC connection that already exists in the workspace. Leave `jdbc_url`, `jdbc_user`, and all secret fields NULL. The connection object owns the URL, credentials, and driver.
+Set `connection_name` to a UC connection that already exists in the workspace. Leave `jdbc_url`, `jdbc_user`, and all secret fields NULL. The connection object owns the URL, credentials, and driver. Set `connection_database` to read from a database other than the connection's default.
 
 ```sql
 -- Example: UC Connection row
@@ -64,7 +65,8 @@ INSERT INTO catalog.schema.jdbc_ingestion_config VALUES (
   'my_sqlserver_connection',                    -- connection_name
   5, 10000, 8,                                  -- watermark_threshold, fetch_size, num_partitions
   current_timestamp(),                          -- update_dttm
-  true                                          -- enabled
+  true,                                         -- enabled
+  NULL                                          -- connection_database
 );
 ```
 
@@ -97,7 +99,8 @@ INSERT INTO catalog.schema.jdbc_ingestion_config VALUES (
   NULL,                                         -- connection_name
   5, 10000, 8,                                  -- watermark_threshold, fetch_size, num_partitions
   current_timestamp(),                          -- update_dttm
-  true                                          -- enabled
+  true,                                         -- enabled
+  NULL                                          -- connection_database
 );
 ```
 

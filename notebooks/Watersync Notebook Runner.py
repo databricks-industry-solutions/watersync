@@ -219,6 +219,7 @@ table_configs = [
         #jdbc_secret_scope = "watersync",
         #jdbc_secret_key   = "jdbc_pass",
         connection_name   = "clarity_conn",
+        #connection_database = "clarity",   # optional: overrides the UC connection database (Oracle: service name)
         watermark_threshold_minutes = 5,
         fetch_size        = 10000,
         num_partitions    = 8,
@@ -241,6 +242,7 @@ table_configs = [
         #jdbc_secret_scope = "watersync",
         #jdbc_secret_key   = "jdbc_pass",
         connection_name   = "clarity_conn",
+        #connection_database = "clarity",   # optional: overrides the UC connection database (Oracle: service name)
         watermark_threshold_minutes = 5,
         fetch_size        = 10000,
         num_partitions    = 8,
@@ -276,6 +278,7 @@ _cfg_schema = StructType([
     StructField("fetch_size",        IntegerType(), True),
     StructField("num_partitions",    IntegerType(), True),
     StructField("enabled",           BooleanType(), False),
+    StructField("connection_database", StringType(), True),
 ])
 
 _rows = [
@@ -301,6 +304,7 @@ _rows = [
         r.get("fetch_size"),
         r.get("num_partitions"),
         r.get("enabled", True),
+        r.get("connection_database"),
     )
     for r in table_configs
 ]

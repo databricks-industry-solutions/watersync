@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { jobs } from '@databricks/sdk-experimental';
 import type { Application } from 'express';
-import { jobPayloadSchema, jobSchedulePayloadSchema } from '../schemas.js';
+import { jobPayloadSchema, jobSchedulePayloadSchema, toRunAs } from '../schemas.js';
 import { workspace } from '../auth.js';
 import { workspaceBaseUrl } from '../sql.js';
 import {
@@ -67,6 +67,24 @@ export function registerJobRoutes(app: Application) {
     })
   );
 
+  app.get(
+    '/api/node-types',
+    apiRoute('node_types_list', async (_req, res) => {
+      const response = await workspace().clusters.listNodeTypes();
+      const nodeTypes = (response.node_types ?? [])
+        .filter((nodeType) => !nodeType.is_deprecated && !nodeType.is_hidden && !nodeType.num_gpus)
+        .sort((a, b) => a.memory_mb - b.memory_mb || a.num_cores - b.num_cores);
+      // Smallest general-purpose node with at least 4 cores, falling back to any node with 4 cores.
+      const preferred =
+        nodeTypes.find((nodeType) => nodeType.num_cores >= 4 && /general/i.test(nodeType.category)) ??
+        nodeTypes.find((nodeType) => nodeType.num_cores >= 4);
+      res.json({
+        nodeTypeIds: nodeTypes.map((nodeType) => nodeType.node_type_id),
+        defaultNodeTypeId: preferred?.node_type_id ?? null,
+      });
+    })
+  );
+
   app.post(
     '/api/jobs',
     apiRoute('jobs_save', async (req, res) => {
@@ -80,9 +98,12 @@ export function registerJobRoutes(app: Application) {
             ingestionGroup: body.ingestionGroup,
             gitUrl: body.gitUrl,
             gitBranch: body.gitBranch,
+            compute: body.pipelineCompute,
+            runAs: toRunAs(body.runAs.pipeline.mode === 'SAME_AS_JOB' ? body.runAs.job : body.runAs.pipeline),
           })
         : undefined;
       const name = `[${body.ingestionGroup}] Ingestion Pipeline`;
+      const jobRunAs = toRunAs(body.runAs.job);
       const configurationFqn = `${body.catalog}.${body.schema}.jdbc_ingestion_config`;
       const watermarkFqn = `${body.catalog}.${body.schema}.jdbc_ingestion_watermark`;
       const environmentKey = 'watersync_environment';
@@ -141,12 +162,16 @@ export function registerJobRoutes(app: Application) {
           pipeline_task: { pipeline_id: cdcPipelineId, full_refresh: false },
         });
       }
+      // performance_target is job-wide and applies to every serverless task, including a serverless pipeline task.
+      const serverlessPipelineTask = Boolean(cdcPipelineId) && body.pipelineCompute.mode === 'SERVERLESS';
       const settings: jobs.JobSettings = {
         name,
         max_concurrent_runs: 1,
+        ...(body.compute.mode === 'SERVERLESS' || serverlessPipelineTask
+          ? { performance_target: body.compute.performanceTarget }
+          : {}),
         ...(body.compute.mode === 'SERVERLESS'
           ? {
-              performance_target: body.compute.performanceTarget,
               environments: [
                 {
                   environment_key: environmentKey,
@@ -177,6 +202,7 @@ export function registerJobRoutes(app: Application) {
           { name: 'full_refresh', default: 'false' },
         ],
         tasks,
+        ...(jobRunAs ? { run_as: jobRunAs } : {}),
         git_source: {
           git_url: body.gitUrl,
           git_provider: 'gitHub',
@@ -211,6 +237,8 @@ export function registerJobRoutes(app: Application) {
         ingestionGroup: body.ingestionGroup,
         cdcPipelineId,
         computeMode: body.compute.mode,
+        jobRunAs: body.runAs.job.mode,
+        pipelineRunAs: body.runAs.pipeline.mode,
       });
       res.json({ jobId, pipelineId: cdcPipelineId, action });
     })

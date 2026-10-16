@@ -52,7 +52,8 @@ class UnityCatalogSetup:
               fetch_size INT COMMENT 'JDBC fetch size',
               num_partitions INT COMMENT 'JDBC parallelism',
               update_dttm TIMESTAMP COMMENT 'Last update timestamp for the config row',
-              enabled BOOLEAN COMMENT 'True when the config row is active'
+              enabled BOOLEAN COMMENT 'True when the config row is active',
+              connection_database STRING COMMENT 'Database (Oracle: service name) overriding the UC connection default'
             )
             USING DELTA
             CLUSTER BY AUTO
@@ -69,6 +70,7 @@ class UnityCatalogSetup:
             "jdbc_secret_key": "STRING COMMENT 'Secret key containing the JDBC password'",
             "uc_secret_name": "STRING COMMENT 'Unity Catalog secret (catalog.schema.secret_name) containing the JDBC password'",
             "connection_name": "STRING COMMENT 'Unity Catalog connection used instead of jdbc_url'",
+            "connection_database": "STRING COMMENT 'Database (Oracle: service name) overriding the UC connection default'",
             "watermark_threshold_minutes": "INT COMMENT 'Delay behind current time for incremental cutoffs'",
             "fetch_size": "INT COMMENT 'JDBC fetch size'",
             "num_partitions": "INT COMMENT 'JDBC parallelism'",

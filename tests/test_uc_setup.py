@@ -33,6 +33,18 @@ class UnityCatalogSetupTest(unittest.TestCase):
         self.assertEqual(len(alter), 1)
         self.assertIn("uc_secret_name STRING", alter[0])
 
+    def test_config_table_includes_connection_database(self) -> None:
+        spark = FakeSpark(existing_config_columns=[])
+        UnityCatalogSetup(spark, catalog="main", schema="watersync").create_config_table()
+        self.assertIn("connection_database STRING", spark.statements[0])
+
+    def test_existing_config_table_gets_connection_database_added(self) -> None:
+        spark = FakeSpark(existing_config_columns=["ingestion_group", "source_table_name", "uc_secret_name"])
+        UnityCatalogSetup(spark, catalog="main", schema="watersync").create_config_table()
+        alter = [statement for statement in spark.statements if statement.startswith("ALTER TABLE")]
+        self.assertEqual(len(alter), 1)
+        self.assertIn("connection_database STRING", alter[0])
+
     def test_watermark_table_is_not_replaced(self) -> None:
         spark = FakeSpark(existing_config_columns=[])
         UnityCatalogSetup(spark, catalog="main", schema="watersync").create_watermark_state_table()

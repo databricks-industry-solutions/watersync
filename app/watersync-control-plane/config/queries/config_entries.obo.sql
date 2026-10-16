@@ -21,6 +21,7 @@ SELECT
   jdbc_secret_key,
   uc_secret_name,
   connection_name,
+  connection_database,
   coalesce(watermark_threshold_minutes, 5) AS watermark_threshold_minutes,
   coalesce(fetch_size, 10000) AS fetch_size,
   coalesce(num_partitions, 8) AS num_partitions,

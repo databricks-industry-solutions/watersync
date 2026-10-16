@@ -6,9 +6,9 @@ import type { Migration } from './index.js';
  * catalog.schema.
  *
  * For fresh installations the tables are created with the full column set
- * (including `uc_secret_name`).  For existing installations the
- * `CREATE TABLE IF NOT EXISTS` is a no-op and migration 002 adds any missing
- * columns.
+ * (including `uc_secret_name` and `connection_database`).  For existing
+ * installations the `CREATE TABLE IF NOT EXISTS` is a no-op and later
+ * migrations add any missing columns.
  */
 export default {
   id: '001_create_tables',
@@ -38,7 +38,8 @@ export default {
         fetch_size INT NOT NULL,
         num_partitions INT NOT NULL,
         update_dttm TIMESTAMP,
-        enabled BOOLEAN NOT NULL
+        enabled BOOLEAN NOT NULL,
+        connection_database STRING
       )`
     );
 

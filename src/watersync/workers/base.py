@@ -166,6 +166,10 @@ class JdbcIngestionWorker(ABC):
             if not self.config.connection_name:
                 raise ValueError("Either jdbc_url or connection_name is required in the configuration row")
             reader = reader.option("databricks.connection", self.config.connection_name)
+            if self.config.connection_database:
+                # Same option names as remote_query; the connection must allow-list them.
+                database_option = "service_name" if self.sql_dialect == "oracle" else "database"
+                reader = reader.option(database_option, self.config.connection_database)
 
         if (
             partition_column
@@ -360,7 +364,8 @@ class JdbcIngestionWorker(ABC):
         writer.saveAsTable(self.write_table_fqn)
 
         max_watermark = None
-        if self.config.watermark_column:
+        # Full loads read the whole table, so a configured watermark column is not used.
+        if self.config.ingestion_type == "incremental" and self.config.watermark_column:
             max_watermark = (
                 self.spark.table(self.write_table_fqn)
                 .select(F.max(F.col(self.config.watermark_column)).alias("max_wm"))

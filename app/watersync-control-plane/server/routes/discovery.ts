@@ -23,7 +23,7 @@ export function registerDiscoveryRoutes(app: Application) {
       const response = await withDiscoveryConnection(body, (connectionName) =>
         remoteQuery(
           connectionName,
-          body.connectionName ? undefined : body.database,
+          body.database || undefined,
           listTablesSql(body.databaseType, body.tableFilter),
           body.databaseType
         )
@@ -40,7 +40,7 @@ export function registerDiscoveryRoutes(app: Application) {
       const response = await withDiscoveryConnection(body, (connectionName) =>
         remoteQuery(
           connectionName,
-          body.connectionName ? undefined : body.database,
+          body.database || undefined,
           columnsSql(body.databaseType, body.sourceSchema, body.table),
           body.databaseType
         )
@@ -56,7 +56,7 @@ export function registerDiscoveryRoutes(app: Application) {
       const rows = await withDiscoveryConnection(body, async (connectionName) => {
         const response = await remoteQuery(
           connectionName,
-          body.connectionName ? undefined : body.database,
+          body.database || undefined,
           columnsBatchSql(body.databaseType, body.tables),
           body.databaseType
         );

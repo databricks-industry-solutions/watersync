@@ -68,6 +68,7 @@ class IngestionConfig:
     jdbc_secret_key: str = ""
     uc_secret_name: str = ""
     connection_name: str = ""
+    connection_database: str = ""
     watermark_threshold_minutes: int = 5
     fetch_size: int = 10000
     num_partitions: int = 8

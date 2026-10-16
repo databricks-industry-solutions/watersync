@@ -32,6 +32,7 @@ declare module '@databricks/appkit-ui/react' {
         jdbc_secret_key: string | null;
         uc_secret_name: string | null;
         connection_name: string | null;
+        connection_database: string | null;
         watermark_threshold_minutes: number;
         fetch_size: number;
         num_partitions: number;
