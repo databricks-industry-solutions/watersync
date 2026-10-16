@@ -4,19 +4,28 @@ import type { RequestHandler } from 'express';
 import { logger, requestId } from './logging.js';
 
 /**
- * On-behalf-of-user (OBO) auth. Databricks Apps forwards the signed-in user's OAuth token in
- * `x-forwarded-access-token`; every Databricks call made while handling a request uses a client
- * built from that token, so SQL statements, UC connections, jobs, and pipelines all run with the
- * user's own permissions instead of the app service principal's.
+ * Hybrid on-behalf-of-user (OBO) auth.
+ *
+ * Databricks Apps forwards the signed-in user's OAuth token in `x-forwarded-access-token`, but that
+ * token can only carry the scopes Apps offers for user authorization (`sql`, `workspace.workspace`,
+ * catalog reads, ...). So:
+ * - `userWorkspace()` (the user's token) runs all warehouse SQL and workspace file writes, which
+ *   keeps reads, writes, and temporary UC connections under the user's own permissions.
+ * - `appWorkspace()` (the app service principal) handles the APIs users cannot be given a scope for:
+ *   jobs, pipelines, cluster node types, and UC secret values. Callers must check the user's access
+ *   first and grant the user access to anything they create.
  */
-const userClients = new AsyncLocalStorage<WorkspaceClient>();
+type UserContext = { client: WorkspaceClient; userName?: string };
+const userContexts = new AsyncLocalStorage<UserContext>();
 
 const isDevelopment = () => process.env.NODE_ENV === 'development';
 
-let devClient: WorkspaceClient | undefined;
-let warnedDevFallback = false;
+let defaultClient: WorkspaceClient | undefined;
+/** Client from the environment: the app service principal when deployed, local CLI/.env credentials in development. */
+const environmentClient = () => (defaultClient ??= new WorkspaceClient({}));
 
-/** Local development has no Apps proxy, so fall back to the developer's own CLI/.env credentials. */
+let warnedDevFallback = false;
+/** Local development has no Apps proxy, so fall back to the developer's own credentials. */
 const developmentClient = () => {
   if (!warnedDevFallback) {
     logger.warn('auth.obo_dev_fallback', {
@@ -24,16 +33,15 @@ const developmentClient = () => {
     });
     warnedDevFallback = true;
   }
-  devClient ??= new WorkspaceClient({});
-  return devClient;
+  return environmentClient();
 };
 
-const forwardedToken = (header: string | string[] | undefined) =>
+const headerValue = (header: string | string[] | undefined) =>
   (Array.isArray(header) ? header[0] : header)?.trim() || undefined;
 
 /** Runs the rest of the request inside the caller's user context; rejects requests without a user token. */
 export const userContext = (): RequestHandler => (req, res, next) => {
-  const token = forwardedToken(req.headers['x-forwarded-access-token']);
+  const token = headerValue(req.headers['x-forwarded-access-token']);
   if (!token) {
     if (isDevelopment()) return next();
     logger.warn('auth.missing_user_token', { requestId: requestId(req), path: req.path });
@@ -45,7 +53,28 @@ export const userContext = (): RequestHandler => (req, res, next) => {
   }
   const host = process.env.DATABRICKS_HOST;
   const client = new WorkspaceClient({ host, token, authType: 'pat' });
-  userClients.run(client, next);
+  userContexts.run({ client, userName: headerValue(req.headers['x-forwarded-email']) }, next);
+};
+
+/** The WorkspaceClient for the user making the current request. */
+export const userWorkspace = () => {
+  const context = userContexts.getStore();
+  if (context) return context.client;
+  if (isDevelopment()) return developmentClient();
+  throw new Error('No user context: Databricks calls must happen while handling an authenticated request');
+};
+
+/**
+ * The app service principal's WorkspaceClient, for APIs that user tokens cannot be scoped for.
+ * Only use it after checking the user may perform the action.
+ */
+export const appWorkspace = () => environmentClient();
+
+/** User name (email) of the user making the current request, used for permission grants and checks. */
+export const currentUserName = async () => {
+  const userName = userContexts.getStore()?.userName ?? (await userWorkspace().currentUser.me()).userName;
+  if (!userName) throw new Error('Could not determine the signed-in user');
+  return userName;
 };
 
 /**
@@ -56,33 +85,14 @@ export const requiredScopes = [
   {
     scope: 'sql',
     usedFor:
-      'Run SQL on the warehouse: dashboards, configuration and watermark reads and writes, schema migrations, and source discovery.',
-    impactIfMissing: 'Pages show no data and saving configuration or watermarks fails.',
+      'Run SQL on the warehouse as you: dashboards, configuration and watermark reads and writes, schema migrations, temporary source discovery connections, and the access checks done before the app acts on your behalf.',
+    impactIfMissing:
+      'Pages show no data, saving configuration or watermarks fails, and jobs cannot be saved because your access to the configuration cannot be checked.',
   },
   {
-    scope: 'unity-catalog',
-    usedFor: 'Read Unity Catalog secrets (uc_secret_name) to open temporary source discovery connections.',
-    impactIfMissing: 'Source table and column discovery fails for configurations that use a UC secret.',
-  },
-  {
-    scope: 'jobs',
-    usedFor: 'List, create, update, run, and schedule the ingestion jobs.',
-    impactIfMissing: 'The Jobs page is empty and jobs cannot be saved, run, or scheduled.',
-  },
-  {
-    scope: 'pipelines',
-    usedFor: 'Create and update the CDC SCD2 pipeline for incremental or auto CDC sources.',
+    scope: 'workspace.workspace',
+    usedFor: 'Write the CDC pipeline bootstrap file under /Shared/watersync-generated-pipelines as you.',
     impactIfMissing: 'Saving a job fails for ingestion groups that need a CDC pipeline.',
-  },
-  {
-    scope: 'clusters',
-    usedFor: 'List node types for classic job and pipeline compute.',
-    impactIfMissing: 'Node type choices for classic compute cannot be loaded.',
-  },
-  {
-    scope: 'workspace',
-    usedFor: 'Write the CDC pipeline bootstrap file under /Shared/watersync-generated-pipelines.',
-    impactIfMissing: 'Creating or updating the CDC pipeline fails.',
   },
 ] as const;
 
@@ -109,7 +119,7 @@ export type ScopeStatus = {
 
 /** Compares the forwarded user token's scopes with the scopes the app requires. */
 export const scopeStatus = (header: string | string[] | undefined): ScopeStatus => {
-  const token = forwardedToken(header);
+  const token = headerValue(header);
   if (!token) {
     const mode = isDevelopment() ? 'development' : 'missing-token';
     return {
@@ -126,12 +136,4 @@ export const scopeStatus = (header: string | string[] | undefined): ScopeStatus 
       granted: granted ? allApis || granted.includes(item.scope) : null,
     })),
   };
-};
-
-/** The WorkspaceClient for the user making the current request. */
-export const workspace = () => {
-  const client = userClients.getStore();
-  if (client) return client;
-  if (isDevelopment()) return developmentClient();
-  throw new Error('No user context: Databricks calls must happen while handling an authenticated request');
 };

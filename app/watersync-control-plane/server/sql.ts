@@ -1,5 +1,5 @@
 import { sql as dbsql } from '@databricks/sdk-experimental';
-import { workspace } from './auth.js';
+import { userWorkspace } from './auth.js';
 import { logger, serializeError } from './logging.js';
 import { runMigrations, type MigrationContext } from './migrations/index.js';
 
@@ -35,7 +35,7 @@ export async function execute(statement: string, parameters: dbsql.StatementPara
   const startedAt = Date.now();
   let response: dbsql.StatementResponse;
   try {
-    response = await workspace().statementExecution.executeStatement({
+    response = await userWorkspace().statementExecution.executeStatement({
       warehouse_id: warehouseId,
       statement,
       parameters,

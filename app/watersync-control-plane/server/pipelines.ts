@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { pipelines } from '@databricks/sdk-experimental';
-import { workspace } from './auth.js';
+import { appWorkspace, currentUserName, userWorkspace } from './auth.js';
 import { execute, parameter, tableName } from './sql.js';
 import { logger } from './logging.js';
 import type { PipelineCompute } from './schemas.js';
@@ -35,6 +35,16 @@ const pipelineBootstrap = 'from __future__ import annotations\n\nfrom pyspark im
 const classicPipelineBootstrap = (dependency: string) =>
   `# Databricks notebook source\n# MAGIC %pip install "${dependency}"\n\n# COMMAND ----------\n\n${pipelineBootstrap.replace('from __future__ import annotations\n\n', '')}`;
 
+/** The app service principal owns the pipeline; give the requesting user CAN_MANAGE so they can see and manage it. */
+async function grantPipelineToUser(pipelineId: string) {
+  const userName = await currentUserName();
+  await appWorkspace().pipelines.updatePermissions({
+    pipeline_id: pipelineId,
+    access_control_list: [{ user_name: userName, permission_level: 'CAN_MANAGE' }],
+  });
+  logger.info('pipeline.granted_to_user', { pipelineId, userName });
+}
+
 export async function ensureCdcPipeline(opts: {
   pipelineId?: string | null;
   catalog: string;
@@ -50,7 +60,7 @@ export async function ensureCdcPipeline(opts: {
   const pipelineName = `[${opts.ingestionGroup}] CDC SCD2 Pipeline`;
   const safeNamePrefix = `[${opts.ingestionGroup}] CDC SCD2`.replace(/'/g, "''");
   let existingPipelineId: string | undefined;
-  for await (const p of workspace().pipelines.listPipelines({ filter: `name LIKE '${safeNamePrefix}%'` })) {
+  for await (const p of appWorkspace().pipelines.listPipelines({ filter: `name LIKE '${safeNamePrefix}%'` })) {
     if (p.name === pipelineName && p.pipeline_id) {
       existingPipelineId = p.pipeline_id;
       break;
@@ -59,7 +69,7 @@ export async function ensureCdcPipeline(opts: {
 
   const genDir = '/Shared/watersync-generated-pipelines';
   const bootstrapPath = `${genDir}/cdc_pipeline_bootstrap.py`;
-  await workspace().workspace.mkdirs({ path: genDir });
+  await userWorkspace().workspace.mkdirs({ path: genDir });
   const dependency = watersyncDependency(opts.gitUrl, opts.gitBranch);
   let library: pipelines.PipelineLibrary;
   if (opts.compute.mode === 'CLASSIC') {
@@ -67,7 +77,7 @@ export async function ensureCdcPipeline(opts: {
     const groupSlug = opts.ingestionGroup.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 60);
     const groupHash = createHash('sha256').update(opts.ingestionGroup).digest('hex').slice(0, 8);
     const notebookPath = `${genDir}/cdc_pipeline_bootstrap_classic_${groupSlug}_${groupHash}`;
-    await workspace().workspace.import({
+    await userWorkspace().workspace.import({
       path: notebookPath,
       format: 'SOURCE',
       language: 'PYTHON',
@@ -76,7 +86,7 @@ export async function ensureCdcPipeline(opts: {
     });
     library = { notebook: { path: `/Workspace${notebookPath}` } };
   } else {
-    await workspace().workspace.import({ path: bootstrapPath, format: 'RAW', overwrite: true, content: Buffer.from(pipelineBootstrap).toString('base64') })
+    await userWorkspace().workspace.import({ path: bootstrapPath, format: 'RAW', overwrite: true, content: Buffer.from(pipelineBootstrap).toString('base64') })
     library = { file: { path: `/Workspace${bootstrapPath}` } };
   }
 
@@ -117,16 +127,17 @@ export async function ensureCdcPipeline(opts: {
   };
 
   if (existingPipelineId) {
-    await workspace().pipelines.update({ pipeline_id: existingPipelineId, ...settings });
+    await appWorkspace().pipelines.update({ pipeline_id: existingPipelineId, ...settings });
     logger.info('pipeline.updated', {
       pipelineId: existingPipelineId,
       pipelineName,
       ingestionGroup: opts.ingestionGroup,
       computeMode: opts.compute.mode,
     });
+    await grantPipelineToUser(existingPipelineId);
     return existingPipelineId;
   }
-  const created = await workspace().pipelines.create(settings);
+  const created = await appWorkspace().pipelines.create(settings);
   if (!created.pipeline_id) throw new Error('Databricks created the CDC pipeline without returning an ID');
   logger.info('pipeline.created', {
     pipelineId: created.pipeline_id,
@@ -134,5 +145,6 @@ export async function ensureCdcPipeline(opts: {
     ingestionGroup: opts.ingestionGroup,
     computeMode: opts.compute.mode,
   });
+  await grantPipelineToUser(created.pipeline_id);
   return created.pipeline_id;
 }

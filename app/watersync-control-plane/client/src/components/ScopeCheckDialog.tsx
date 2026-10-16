@@ -62,9 +62,9 @@ export function ScopeCheckDialog() {
               : 'Missing user authorization scopes'}
           </DialogTitle>
           <DialogDescription>
-            WaterSync runs every action with your own Databricks credentials. Your access token is missing{' '}
-            {status.mode === 'missing-token' ? 'entirely' : `${missing.length} of the scopes the app needs`}, so some
-            features will fail.
+            WaterSync runs SQL and workspace file writes with your own Databricks credentials. Your access token is
+            missing {status.mode === 'missing-token' ? 'entirely' : `${missing.length} of the scopes the app needs`}, so
+            some features will fail.
           </DialogDescription>
         </DialogHeader>
         <ul className="grid max-h-[50vh] gap-3 overflow-y-auto py-2">

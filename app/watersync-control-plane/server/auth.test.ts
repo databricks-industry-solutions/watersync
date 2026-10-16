@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Request, Response } from 'express';
-import { requiredScopes, scopeStatus, tokenScopes, userContext, workspace } from './auth.js';
+import { requiredScopes, scopeStatus, tokenScopes, userContext, userWorkspace } from './auth.js';
 
 const fakeRequest = (headers: Record<string, string> = {}) =>
   ({ method: 'POST', path: '/api/jobs', headers }) as unknown as Request;
@@ -47,7 +47,7 @@ describe('userContext', () => {
     await new Promise<void>((resolve, reject) => {
       userContext()(fakeRequest({ 'x-forwarded-access-token': 'user-token' }), response, () => {
         headers = new Headers();
-        workspace().config.authenticate(headers).then(resolve, reject);
+        userWorkspace().config.authenticate(headers).then(resolve, reject);
       });
     });
 
@@ -57,7 +57,7 @@ describe('userContext', () => {
   it('refuses to fall back to the service principal outside a request in production', () => {
     vi.stubEnv('NODE_ENV', 'production');
 
-    expect(() => workspace()).toThrow(/No user context/);
+    expect(() => userWorkspace()).toThrow(/No user context/);
   });
 });
 
@@ -81,10 +81,10 @@ describe('tokenScopes', () => {
 describe('scopeStatus', () => {
   it('flags the required scopes the token does not carry', () => {
     vi.stubEnv('NODE_ENV', 'production');
-    const status = scopeStatus(jwt({ scope: 'sql jobs pipelines clusters workspace' }));
+    const status = scopeStatus(jwt({ scope: 'sql offline_access' }));
 
     expect(status.mode).toBe('user');
-    expect(status.scopes.filter((item) => !item.granted).map((item) => item.scope)).toEqual(['unity-catalog']);
+    expect(status.scopes.filter((item) => !item.granted).map((item) => item.scope)).toEqual(['workspace.workspace']);
   });
 
   it('treats all-apis as granting every scope', () => {
