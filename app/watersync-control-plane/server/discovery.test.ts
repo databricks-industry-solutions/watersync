@@ -1,58 +1,71 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const execute = vi.fn();
+const getEffective = vi.fn();
 
 vi.mock('./sql.js', () => ({
-  execute,
+  execute: vi.fn(),
   parameter: vi.fn(),
   sqlLiteral: (value: string) => `'${value.replace(/'/g, "''")}'`,
   workspaceBaseUrl: () => 'https://example.cloud.databricks.com',
-  responseRows: (response: { columns: string[]; rows: string[][] }) =>
-    response.rows.map((values) => Object.fromEntries(response.columns.map((name, index) => [name, values[index]]))),
 }));
 
 vi.mock('./auth.js', () => ({
-  appWorkspace: vi.fn(),
+  appWorkspace: () => ({ grants: { getEffective } }),
   currentUserName: () => Promise.resolve('someone@example.com'),
 }));
 
 const { assertUserCanReadSecret } = await import('./discovery.js');
 
-const grants = (...actionTypes: string[]) => ({
-  columns: ['Principal', 'ActionType', 'ObjectType', 'ObjectKey'],
-  rows: actionTypes.map((actionType) => ['someone@example.com', actionType, 'SECRET', 'main.default.db_pass']),
+// Shape returned by GET /api/2.1/unity-catalog/effective-permissions/secret/{name}?principal=...
+const effective = (...assignments: Array<[principal: string, privileges: string[]]>) => ({
+  privilege_assignments: assignments.map(([principal, privileges]) => ({
+    principal,
+    privileges: privileges.map((privilege) => ({ privilege })),
+  })),
 });
 
 afterEach(() => {
-  execute.mockReset();
+  getEffective.mockReset();
   vi.restoreAllMocks();
 });
 
 describe('assertUserCanReadSecret', () => {
-  it('checks the grants of the signed-in user with quoted identifiers', async () => {
-    execute.mockResolvedValue(grants('READ SECRET'));
+  it('asks for the effective permissions of the signed-in user on the secret', async () => {
+    getEffective.mockResolvedValue(effective(['someone@example.com', ['READ_SECRET']]));
 
     await assertUserCanReadSecret('main.default.db_pass');
 
-    expect(execute).toHaveBeenCalledWith('SHOW GRANTS `someone@example.com` ON SECRET `main`.`default`.`db_pass`');
+    expect(getEffective).toHaveBeenCalledWith({
+      securable_type: 'secret',
+      full_name: 'main.default.db_pass',
+      principal: 'someone@example.com',
+    });
   });
 
-  it.each(['READ SECRET', 'ALL PRIVILEGES', 'MANAGE'])('allows %s', async (privilege) => {
-    execute.mockResolvedValue(grants('USE SCHEMA', privilege));
+  it.each(['READ_SECRET', 'ALL_PRIVILEGES', 'MANAGE'])('allows %s', async (privilege) => {
+    getEffective.mockResolvedValue(effective(['someone@example.com', ['USE_SCHEMA', privilege]]));
 
     await expect(assertUserCanReadSecret('main.default.db_pass')).resolves.toBeUndefined();
   });
 
-  it('rejects users without a read privilege', async () => {
+  it('allows a read privilege held through one of the user’s groups', async () => {
+    getEffective.mockResolvedValue(
+      effective(['account users', ['READ_METADATA']], ['data-engineers', ['READ_SECRET']])
+    );
+
+    await expect(assertUserCanReadSecret('main.default.db_pass')).resolves.toBeUndefined();
+  });
+
+  it('rejects users who can only see the secret', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    execute.mockResolvedValue(grants('USE CATALOG', 'REFERENCE SECRET'));
+    getEffective.mockResolvedValue(effective(['account users', ['READ_METADATA']]));
 
     await expect(assertUserCanReadSecret('main.default.db_pass')).rejects.toThrow(/need READ SECRET/);
   });
 
   it('fails closed when the access check itself fails', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    execute.mockRejectedValue(new Error('PERMISSION_DENIED'));
+    getEffective.mockRejectedValue(new Error('PERMISSION_DENIED'));
 
     await expect(assertUserCanReadSecret('main.default.db_pass')).rejects.toThrow(/Could not verify your access/);
   });

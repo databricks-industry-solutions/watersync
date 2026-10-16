@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { SourceDiscovery, SourceDatabaseType } from './schemas.js';
 import { appWorkspace, currentUserName } from './auth.js';
-import { execute, parameter, responseRows, sqlLiteral, workspaceBaseUrl } from './sql.js';
+import { execute, parameter, sqlLiteral, workspaceBaseUrl } from './sql.js';
 import { logger, serializeError } from './logging.js';
 
 export const remoteQuery = async (
@@ -45,33 +45,34 @@ export const jdbcEndpoint = (databaseType: SourceDiscovery['databaseType'], jdbc
   return { host: match[1], port: match[2] ?? (databaseType === 'postgresql' ? '5432' : '3306') };
 };
 
-const quoteIdentifier = (value: string) => `\`${value.replace(/`/g, '``')}\``;
-
 // MANAGE lets a user grant themselves READ SECRET, so it is treated as equivalent.
-const secretReadPrivileges = new Set(['READ SECRET', 'ALL PRIVILEGES', 'MANAGE']);
+const secretReadPrivileges = new Set(['READ_SECRET', 'ALL_PRIVILEGES', 'MANAGE']);
 
 /**
- * User tokens cannot be scoped for the UC secrets API, so the app service principal reads secret
- * values. Before it does, confirm as the user (via SQL) that they may read the secret themselves,
- * so the app cannot be used to reach secrets the user has no access to. Fails closed.
+ * User tokens cannot be scoped for the UC secrets API, and SQL warehouses do not support UC secrets,
+ * so the app service principal reads secret values. Before it does, confirm that the user may read
+ * the secret themselves: effective permissions for the user include grants inherited from the
+ * catalog or schema and grants held by the user's groups. Fails closed.
  */
 export async function assertUserCanReadSecret(secretName: string) {
-  const parts = secretName.split('.');
   const userName = await currentUserName();
-  let rows: Array<Record<string, string | null>>;
+  let privileges: string[];
   try {
-    rows = responseRows(
-      await execute(`SHOW GRANTS ${quoteIdentifier(userName)} ON SECRET ${parts.map(quoteIdentifier).join('.')}`)
+    const response = await appWorkspace().grants.getEffective({
+      securable_type: 'secret',
+      full_name: secretName,
+      principal: userName,
+    });
+    privileges = (response.privilege_assignments ?? []).flatMap((assignment) =>
+      (assignment.privileges ?? []).map((item) => String(item.privilege ?? ''))
     );
   } catch (error) {
     logger.warn('discovery.secret_access_check_failed', { secretName, userName, error: serializeError(error) });
     throw new Error(
-      `Could not verify your access to UC secret '${secretName}'. Make sure it exists and you have READ SECRET on it, or use a secret scope and key instead.`
+      `Could not verify your access to UC secret '${secretName}'. Make sure it exists and that you and the app service principal can view its permissions.`
     );
   }
-  const actionType = (row: Record<string, string | null>) =>
-    Object.entries(row).find(([column]) => /^action_?type$/i.test(column))?.[1]?.toUpperCase() ?? '';
-  if (!rows.some((row) => secretReadPrivileges.has(actionType(row)))) {
+  if (!privileges.some((privilege) => secretReadPrivileges.has(privilege))) {
     logger.warn('discovery.secret_access_denied', { secretName, userName });
     throw new Error(`You need READ SECRET on UC secret '${secretName}' to use it for source discovery.`);
   }
