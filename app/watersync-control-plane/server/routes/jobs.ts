@@ -2,7 +2,8 @@ import { z } from 'zod';
 import { jobs } from '@databricks/sdk-experimental';
 import type { Application } from 'express';
 import { jobPayloadSchema, jobSchedulePayloadSchema } from '../schemas.js';
-import { workspace, workspaceBaseUrl } from '../sql.js';
+import { workspace } from '../auth.js';
+import { workspaceBaseUrl } from '../sql.js';
 import {
   groupNeedsCdcPipeline,
   ensureCdcPipeline,
@@ -22,7 +23,7 @@ export function registerJobRoutes(app: Application) {
     '/api/jobs',
     apiRoute('jobs_list', async (_req, res) => {
       const visibleJobs = [];
-      for await (const job of workspace.jobs.list({ limit: 100, expand_tasks: false })) visibleJobs.push(job);
+      for await (const job of workspace().jobs.list({ limit: 100, expand_tasks: false })) visibleJobs.push(job);
       const workspaceUrl = workspaceBaseUrl();
       const result = [];
       for (let offset = 0; offset < visibleJobs.length; offset += 8) {
@@ -31,7 +32,7 @@ export function registerJobRoutes(app: Application) {
           batch.map(async (job) => {
             const recentRuns = [];
             if (job.job_id) {
-              for await (const run of workspace.jobs.listRuns({
+              for await (const run of workspace().jobs.listRuns({
                 job_id: job.job_id,
                 limit: 10,
                 expand_tasks: false,
@@ -192,15 +193,15 @@ export function registerJobRoutes(app: Application) {
           : {}),
       };
       const existing = [];
-      for await (const job of workspace.jobs.list({ name, limit: 25, expand_tasks: false })) {
+      for await (const job of workspace().jobs.list({ name, limit: 25, expand_tasks: false })) {
         if (job.settings?.name === name) existing.push(job);
       }
       const existingJobId = existing[0]?.job_id;
       let jobId = existingJobId;
       if (existingJobId) {
-        await workspace.jobs.reset({ job_id: existingJobId, new_settings: settings });
+        await workspace().jobs.reset({ job_id: existingJobId, new_settings: settings });
       } else {
-        jobId = (await workspace.jobs.create(settings as jobs.CreateJob)).job_id;
+        jobId = (await workspace().jobs.create(settings as jobs.CreateJob)).job_id;
       }
       const action = existingJobId ? 'updated' : 'created';
       logger.info('jobs.saved', {
@@ -226,14 +227,14 @@ export function registerJobRoutes(app: Application) {
         // temporarily flip the pipeline task's full_refresh flag on the job
         // definition, trigger the run, then reset it.  The run captures the
         // setting at creation time so the immediate reset is safe.
-        const job = await workspace.jobs.get({ job_id: jobId });
+        const job = await workspace().jobs.get({ job_id: jobId });
         const cdcTask = job.settings?.tasks?.find((t) => t.pipeline_task);
         if (cdcTask?.pipeline_task) {
           cdcTask.pipeline_task.full_refresh = true;
-          await workspace.jobs.update({ job_id: jobId, new_settings: job.settings! });
+          await workspace().jobs.update({ job_id: jobId, new_settings: job.settings! });
         }
 
-        const run = await workspace.jobs.runNow({
+        const run = await workspace().jobs.runNow({
           job_id: jobId,
           job_parameters: { full_refresh: 'true' },
         });
@@ -241,13 +242,13 @@ export function registerJobRoutes(app: Application) {
         // Reset the pipeline task back to incremental
         if (cdcTask?.pipeline_task) {
           cdcTask.pipeline_task.full_refresh = false;
-          await workspace.jobs.update({ job_id: jobId, new_settings: job.settings! });
+          await workspace().jobs.update({ job_id: jobId, new_settings: job.settings! });
         }
 
         logger.info('jobs.run_started', { jobId, runId: run.run_id, fullRefresh });
         res.json({ runId: run.run_id, fullRefresh });
       } else {
-        const run = await workspace.jobs.runNow({ job_id: jobId });
+        const run = await workspace().jobs.runNow({ job_id: jobId });
         logger.info('jobs.run_started', { jobId, runId: run.run_id, fullRefresh });
         res.json({ runId: run.run_id, fullRefresh });
       }
@@ -262,7 +263,7 @@ export function registerJobRoutes(app: Application) {
         jobId: z.coerce.number().parse(req.params.jobId),
       });
       if (body.enabled) {
-        await workspace.jobs.update({
+        await workspace().jobs.update({
           job_id: body.jobId,
           new_settings: {
             schedule: {
@@ -273,7 +274,7 @@ export function registerJobRoutes(app: Application) {
           },
         });
       } else {
-        await workspace.jobs.update({ job_id: body.jobId, fields_to_remove: ['schedule'] });
+        await workspace().jobs.update({ job_id: body.jobId, fields_to_remove: ['schedule'] });
       }
       logger.info('jobs.schedule_updated', {
         jobId: body.jobId,

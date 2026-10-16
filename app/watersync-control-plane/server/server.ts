@@ -7,6 +7,7 @@ import {
   requestLogging,
   apiRoute,
 } from './logging.js';
+import { userContext } from './auth.js';
 import { registerConfigRoutes } from './routes/config.js';
 import { registerDiscoveryRoutes } from './routes/discovery.js';
 import { registerJobRoutes } from './routes/jobs.js';
@@ -27,6 +28,9 @@ await createApp({
           res.status(204).end();
         })
       );
+
+      // Every route below talks to Databricks as the signed-in user (on-behalf-of auth).
+      app.use('/api', userContext());
 
       registerConfigRoutes(app);
       registerDiscoveryRoutes(app);

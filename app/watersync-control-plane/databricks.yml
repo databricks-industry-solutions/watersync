@@ -11,9 +11,14 @@ resources:
       name: 'watersync-control-plane'
       description: 'Configure and monitor Watersync JDBC pipelines'
       source_code_path: ./
-      # Uncomment to enable on behalf of user API scopes. Available scopes: sql, dashboards.genie, files.files, serving.serving-endpoints
-      # user_api_scopes:
-      #   - sql
+      # On-behalf-of-user auth: the app calls Databricks with the signed-in user's token,
+      # so SQL, UC connections/secrets, jobs, and pipelines run with that user's permissions.
+      user_api_scopes:
+        - sql
+        - unity-catalog
+        - jobs
+        - pipelines
+        - workspace
 
       # The resources which this app has access to.
       resources:

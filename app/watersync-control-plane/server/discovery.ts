@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { SourceDiscovery, SourceDatabaseType } from './schemas.js';
-import { execute, parameter, sqlLiteral, workspace, workspaceBaseUrl } from './sql.js';
+import { workspace } from './auth.js';
+import { execute, parameter, sqlLiteral, workspaceBaseUrl } from './sql.js';
 import { logger, serializeError } from './logging.js';
 
 export const remoteQuery = async (
@@ -59,7 +60,7 @@ export async function withDiscoveryConnection<T>(body: SourceDiscovery, action: 
     // UC secrets are not supported on SQL warehouses — retrieve the value via REST API
     // and pass it as a string literal in the CREATE CONNECTION statement.
     const authHeaders = new Headers();
-    await workspace.config.authenticate(authHeaders);
+    await workspace().config.authenticate(authHeaders);
     const secretUrl = `${workspaceBaseUrl()}/api/2.1/unity-catalog/secrets/${body.ucSecretName}?include_value=true`;
     const secretResponse = await fetch(secretUrl, { headers: authHeaders });
     if (!secretResponse.ok) {

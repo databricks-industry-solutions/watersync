@@ -4,6 +4,14 @@ resources:
       name: ${var.app_name}
       description: Configure and monitor Watersync JDBC pipelines.
       source_code_path: ../app/watersync-control-plane
+      # On-behalf-of-user auth: the app calls Databricks with the signed-in user's token,
+      # so SQL, UC connections/secrets, jobs, and pipelines run with that user's permissions.
+      user_api_scopes:
+        - sql
+        - unity-catalog
+        - jobs
+        - pipelines
+        - workspace
       resources:
         - name: sql-warehouse
           sql_warehouse:

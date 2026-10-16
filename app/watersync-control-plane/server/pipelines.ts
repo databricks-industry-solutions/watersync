@@ -1,5 +1,6 @@
 import { pipelines } from '@databricks/sdk-experimental';
-import { execute, parameter, tableName, workspace } from './sql.js';
+import { workspace } from './auth.js';
+import { execute, parameter, tableName } from './sql.js';
 import { logger } from './logging.js';
 
 export const plannerNotebookPath = 'notebooks/Task - Plan Configs';
@@ -40,7 +41,7 @@ export async function ensureCdcPipeline(opts: {
   const pipelineName = `[${opts.ingestionGroup}] CDC SCD2 Pipeline`;
   const safeNamePrefix = `[${opts.ingestionGroup}] CDC SCD2`.replace(/'/g, "''");
   let existingPipelineId: string | undefined;
-  for await (const p of workspace.pipelines.listPipelines({ filter: `name LIKE '${safeNamePrefix}%'` })) {
+  for await (const p of workspace().pipelines.listPipelines({ filter: `name LIKE '${safeNamePrefix}%'` })) {
     if (p.name === pipelineName && p.pipeline_id) {
       existingPipelineId = p.pipeline_id;
       break;
@@ -49,8 +50,8 @@ export async function ensureCdcPipeline(opts: {
 
   const genDir = '/Shared/watersync-generated-pipelines';
   const bootstrapPath = `${genDir}/cdc_pipeline_bootstrap.py`;
-  await workspace.workspace.mkdirs({ path: genDir });
-  await workspace.workspace.import({ path: bootstrapPath, format: 'RAW', overwrite: true, content: Buffer.from(pipelineBootstrap).toString('base64') })
+  await workspace().workspace.mkdirs({ path: genDir });
+  await workspace().workspace.import({ path: bootstrapPath, format: 'RAW', overwrite: true, content: Buffer.from(pipelineBootstrap).toString('base64') })
 
   const configurationFqn = `${opts.catalog}.${opts.schema}.jdbc_ingestion_config`;
   const watermarkFqn = `${opts.catalog}.${opts.schema}.jdbc_ingestion_watermark`;
@@ -70,11 +71,11 @@ export async function ensureCdcPipeline(opts: {
   };
 
   if (existingPipelineId) {
-    await workspace.pipelines.update({ pipeline_id: existingPipelineId, ...settings });
+    await workspace().pipelines.update({ pipeline_id: existingPipelineId, ...settings });
     logger.info('pipeline.updated', { pipelineId: existingPipelineId, pipelineName, ingestionGroup: opts.ingestionGroup });
     return existingPipelineId;
   }
-  const created = await workspace.pipelines.create(settings);
+  const created = await workspace().pipelines.create(settings);
   if (!created.pipeline_id) throw new Error('Databricks created the CDC pipeline without returning an ID');
   logger.info('pipeline.created', { pipelineId: created.pipeline_id, pipelineName, ingestionGroup: opts.ingestionGroup });
   return created.pipeline_id;
