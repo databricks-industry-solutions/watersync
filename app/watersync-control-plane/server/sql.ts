@@ -1,8 +1,7 @@
-import { WorkspaceClient, sql as dbsql } from '@databricks/sdk-experimental';
+import { sql as dbsql } from '@databricks/sdk-experimental';
+import { userWorkspace } from './auth.js';
 import { logger, serializeError } from './logging.js';
 import { runMigrations, type MigrationContext } from './migrations/index.js';
-
-export const workspace = new WorkspaceClient({});
 
 export const requiredEnv = (name: string) => {
   const value = process.env[name];
@@ -36,7 +35,7 @@ export async function execute(statement: string, parameters: dbsql.StatementPara
   const startedAt = Date.now();
   let response: dbsql.StatementResponse;
   try {
-    response = await workspace.statementExecution.executeStatement({
+    response = await userWorkspace().statementExecution.executeStatement({
       warehouse_id: warehouseId,
       statement,
       parameters,

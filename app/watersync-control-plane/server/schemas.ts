@@ -90,11 +90,19 @@ export const sourceDiscoverySchema = z
         context.addIssue({ code: 'custom', path: [field], message: 'Required for direct JDBC discovery' });
       }
     }
-    if (!value.ucSecretName) {
-      for (const field of ['jdbcSecretScope', 'jdbcSecretKey'] as const) {
-        if (!value[field]) {
-          context.addIssue({ code: 'custom', path: [field], message: 'Required for direct JDBC discovery (or provide ucSecretName)' });
-        }
+    // A temporary connection can only reference a workspace secret scope; a UC secret value would have
+    // to be pasted into the CREATE CONNECTION statement (and query history), so it is not supported.
+    if (value.ucSecretName) {
+      context.addIssue({
+        code: 'custom',
+        path: ['ucSecretName'],
+        message:
+          'UC secrets cannot be used for source discovery; use a secret scope and key or an existing UC connection',
+      });
+    }
+    for (const field of ['jdbcSecretScope', 'jdbcSecretKey'] as const) {
+      if (!value[field]) {
+        context.addIssue({ code: 'custom', path: [field], message: 'Required for direct JDBC discovery' });
       }
     }
     if (/(?:password|pwd)\s*=/i.test(value.jdbcUrl)) {

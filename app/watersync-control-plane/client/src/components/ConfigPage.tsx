@@ -255,7 +255,6 @@ function DiscoveryDialog({
   const [jdbcUser, setJdbcUser] = useState('');
   const [secretScope, setSecretScope] = useState('');
   const [secretKey, setSecretKey] = useState('');
-  const [ucSecretName, setUcSecretName] = useState('');
   const [tables, setTables] = useState<SourceTable[]>([]);
   const [tablesTruncated, setTablesTruncated] = useState(false);
   const [tableFilter, setTableFilter] = useState('');
@@ -300,11 +299,10 @@ function DiscoveryDialog({
       method: 'POST',
       body: JSON.stringify({
         connectionName: connectionMode === 'uc' ? connectionName : '',
-        jdbcUrl: connectionMode === 'jdbc' || connectionMode === 'uc_secret' ? jdbcUrl : '',
-        jdbcUser: connectionMode === 'jdbc' || connectionMode === 'uc_secret' ? jdbcUser : '',
+        jdbcUrl: connectionMode === 'jdbc' ? jdbcUrl : '',
+        jdbcUser: connectionMode === 'jdbc' ? jdbcUser : '',
         jdbcSecretScope: connectionMode === 'jdbc' ? secretScope : '',
         jdbcSecretKey: connectionMode === 'jdbc' ? secretKey : '',
-        ucSecretName: connectionMode === 'uc_secret' ? ucSecretName : '',
         database,
         databaseType,
         tableFilter: filter,
@@ -389,11 +387,10 @@ function DiscoveryDialog({
           method: 'POST',
           body: JSON.stringify({
             connectionName: connectionMode === 'uc' ? connectionName : '',
-            jdbcUrl: connectionMode === 'jdbc' || connectionMode === 'uc_secret' ? jdbcUrl : '',
-            jdbcUser: connectionMode === 'jdbc' || connectionMode === 'uc_secret' ? jdbcUser : '',
+            jdbcUrl: connectionMode === 'jdbc' ? jdbcUrl : '',
+            jdbcUser: connectionMode === 'jdbc' ? jdbcUser : '',
             jdbcSecretScope: connectionMode === 'jdbc' ? secretScope : '',
             jdbcSecretKey: connectionMode === 'jdbc' ? secretKey : '',
-            ucSecretName: connectionMode === 'uc_secret' ? ucSecretName : '',
             database,
             databaseType,
             tables: page.map((table) => ({ sourceSchema: table.table_schema, table: table.table_name })),
@@ -454,11 +451,11 @@ function DiscoveryDialog({
             predicateColumn: draft.predicateColumn === 'none' ? null : draft.predicateColumn,
             epicCsaEnabled: epicCsa,
             autoCdcFromSnapshot,
-            jdbcUrl: connectionMode === 'jdbc' || connectionMode === 'uc_secret' ? jdbcUrl : null,
-            jdbcUser: connectionMode === 'jdbc' || connectionMode === 'uc_secret' ? jdbcUser : null,
+            jdbcUrl: connectionMode === 'jdbc' ? jdbcUrl : null,
+            jdbcUser: connectionMode === 'jdbc' ? jdbcUser : null,
             jdbcSecretScope: connectionMode === 'jdbc' ? secretScope : null,
             jdbcSecretKey: connectionMode === 'jdbc' ? secretKey : null,
-            ucSecretName: connectionMode === 'uc_secret' ? ucSecretName : null,
+            ucSecretName: null,
             connectionName: connectionMode === 'uc' ? connectionName : null,
             connectionDatabase: connectionMode === 'uc' ? database || null : null,
             watermarkThresholdMinutes: Number(threshold),
@@ -493,9 +490,7 @@ function DiscoveryDialog({
   const canLoadTables =
     connectionMode === 'uc'
       ? Boolean(connectionName)
-      : connectionMode === 'uc_secret'
-        ? Boolean(database && jdbcUrl && jdbcUser && ucSecretName)
-        : Boolean(database && jdbcUrl && jdbcUser && secretScope && secretKey);
+      : Boolean(database && jdbcUrl && jdbcUser && secretScope && secretKey);
   const updateDraft = (index: number, changes: Partial<TableDraft>) => {
     setConfirmedPages((current) => current.filter((page) => page !== Math.floor(index / 10)));
     setDrafts((current) =>
@@ -653,7 +648,6 @@ function DiscoveryDialog({
                     <SelectContent>
                       <SelectItem value="uc">Existing UC connection</SelectItem>
                       <SelectItem value="jdbc">Direct JDBC URL</SelectItem>
-                      <SelectItem value="uc_secret">UC Secret (JDBC)</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -689,48 +683,6 @@ function DiscoveryDialog({
                       onChange={setDatabase}
                       hint="Leave empty to use the database defined by the UC connection."
                     />
-                  </>
-                ) : connectionMode === 'uc_secret' ? (
-                  <>
-                    <ControlledField
-                      id="source-database"
-                      label={databaseType === 'oracle' ? 'Oracle service name' : 'Database'}
-                      value={database}
-                      onChange={setDatabase}
-                      required
-                    />
-                    <ControlledField
-                      id="discover-jdbc-user"
-                      label="JDBC user"
-                      value={jdbcUser}
-                      onChange={setJdbcUser}
-                      required
-                    />
-                    <ControlledField
-                      id="discover-uc-secret-name"
-                      label="UC secret name"
-                      value={ucSecretName}
-                      onChange={setUcSecretName}
-                      hint="Format: catalog.schema.secret_name"
-                      required
-                    />
-                    <div className="md:col-span-2 xl:col-span-2">
-                      <ControlledField
-                        id="discover-jdbc-url"
-                        label="JDBC URL"
-                        value={jdbcUrl}
-                        onChange={setJdbcUrl}
-                        required
-                      />
-                    </div>
-                    <Alert className="md:col-span-2 xl:col-span-3">
-                      <AlertTitle>UC secret-backed authentication</AlertTitle>
-                      <AlertDescription>
-                        Provide the UC secret name as catalog.schema.secret_name. Do not include a password in the
-                        JDBC URL. Discovery creates and removes a temporary UC connection using this UC secret
-                        reference.
-                      </AlertDescription>
-                    </Alert>
                   </>
                 ) : (
                   <>
@@ -775,7 +727,8 @@ function DiscoveryDialog({
                       <AlertTitle>Secret-backed authentication</AlertTitle>
                       <AlertDescription>
                         Do not include a password in the JDBC URL. Discovery creates and removes a temporary UC
-                        connection using this secret reference.
+                        connection using this secret reference. Unity Catalog secrets cannot be used for discovery;
+                        to ingest with one, set its UC secret name on the saved configurations.
                       </AlertDescription>
                     </Alert>
                   </>

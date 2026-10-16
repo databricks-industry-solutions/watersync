@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { SourceDiscovery, SourceDatabaseType } from './schemas.js';
-import { execute, parameter, sqlLiteral, workspace, workspaceBaseUrl } from './sql.js';
+import { execute, parameter, sqlLiteral } from './sql.js';
 import { logger, serializeError } from './logging.js';
 
 export const remoteQuery = async (
@@ -44,47 +44,23 @@ export const jdbcEndpoint = (databaseType: SourceDiscovery['databaseType'], jdbc
   return { host: match[1], port: match[2] ?? (databaseType === 'postgresql' ? '5432' : '3306') };
 };
 
-export async function withDiscoveryConnection<T>(body: SourceDiscovery, action: (connectionName: string) => Promise<T>) {
+export async function withDiscoveryConnection<T>(
+  body: SourceDiscovery,
+  action: (connectionName: string) => Promise<T>
+) {
   if (body.connectionName) return action(body.connectionName);
 
   const endpoint = jdbcEndpoint(body.databaseType, body.jdbcUrl);
   const connectionName = `_watersync_discovery_${randomUUID().replace(/-/g, '')}`;
   const connectionType = body.databaseType === 'sqlserver' ? 'SQLSERVER' : body.databaseType.toUpperCase();
-  let createConnectionSql: string;
-  if (body.ucSecretName) {
-    const parts = body.ucSecretName.split('.');
-    if (parts.length !== 3) {
-      throw new Error(`UC secret name '${body.ucSecretName}' must be in 'catalog.schema.secret_name' format`);
-    }
-    // UC secrets are not supported on SQL warehouses — retrieve the value via REST API
-    // and pass it as a string literal in the CREATE CONNECTION statement.
-    const authHeaders = new Headers();
-    await workspace.config.authenticate(authHeaders);
-    const secretUrl = `${workspaceBaseUrl()}/api/2.1/unity-catalog/secrets/${body.ucSecretName}?include_value=true`;
-    const secretResponse = await fetch(secretUrl, { headers: authHeaders });
-    if (!secretResponse.ok) {
-      throw new Error(`Failed to retrieve UC secret '${body.ucSecretName}': ${secretResponse.status} ${await secretResponse.text()}`);
-    }
-    const secretData = (await secretResponse.json()) as { effective_value?: string };
-    if (!secretData.effective_value) {
-      throw new Error(`UC secret '${body.ucSecretName}' returned an empty value`);
-    }
-    createConnectionSql = `CREATE CONNECTION \`${connectionName}\` TYPE ${connectionType} OPTIONS (
-      host ${sqlLiteral(endpoint.host)},
-      port ${sqlLiteral(endpoint.port)},
-      user ${sqlLiteral(body.jdbcUser)},
-      password ${sqlLiteral(secretData.effective_value)},
-      trustServerCertificate true
-    )`;
-  } else {
-    createConnectionSql = `CREATE CONNECTION \`${connectionName}\` TYPE ${connectionType} OPTIONS (
-      host ${sqlLiteral(endpoint.host)},
-      port ${sqlLiteral(endpoint.port)},
-      user ${sqlLiteral(body.jdbcUser)},
-      password secret(${sqlLiteral(body.jdbcSecretScope)}, ${sqlLiteral(body.jdbcSecretKey)}),
-      trustServerCertificate true
-    )`;
-  }
+  // secret() is resolved by the warehouse, so the password never appears in the statement text.
+  const createConnectionSql = `CREATE CONNECTION \`${connectionName}\` TYPE ${connectionType} OPTIONS (
+    host ${sqlLiteral(endpoint.host)},
+    port ${sqlLiteral(endpoint.port)},
+    user ${sqlLiteral(body.jdbcUser)},
+    password secret(${sqlLiteral(body.jdbcSecretScope)}, ${sqlLiteral(body.jdbcSecretKey)}),
+    trustServerCertificate true
+  )`;
   await execute(createConnectionSql);
   try {
     return await action(connectionName);
@@ -136,8 +112,7 @@ export const listTablesSql = (databaseType: SourceDatabaseType, tableFilter: str
 
 // remote_query wraps the statement as a derived table, and SQL Server rejects ORDER BY there
 // unless TOP, OFFSET or FOR XML is present.
-const orderBySuffix = (databaseType: SourceDatabaseType) =>
-  databaseType === 'sqlserver' ? ' OFFSET 0 ROWS' : '';
+const orderBySuffix = (databaseType: SourceDatabaseType) => (databaseType === 'sqlserver' ? ' OFFSET 0 ROWS' : '');
 
 export const columnsSql = (databaseType: SourceDatabaseType, sourceSchema: string, table: string) => {
   const schema = sqlLiteral(sourceSchema);
