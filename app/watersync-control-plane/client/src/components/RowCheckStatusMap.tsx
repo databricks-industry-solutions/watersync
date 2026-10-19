@@ -10,8 +10,8 @@ import {
   useAnalyticsQuery,
 } from '@databricks/appkit-ui/react';
 import { useReportedFailure } from '../lib/logging';
-import { tableKey } from '../lib/rowCheckFilters';
-import type { PickedTable } from '../lib/rowCheckFilters';
+import { tableKey } from '../lib/pageFilters';
+import type { PickedTable } from '../lib/pageFilters';
 import type { Location } from '../types';
 import { fqn } from '../utils';
 import { ErrorState } from './shared';

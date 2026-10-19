@@ -2,11 +2,12 @@
 -- @param row_check_table STRING
 -- @param status STRING
 -- @param page_size INT
+-- @param page_offset INT
 -- @param refresh_token INT
 -- One row per ingestion group with the latest results of its enabled tables added up: the Row checks page shows
 -- it when no group or table is selected. status ('' for all, 'attention', 'match', 'unchecked') keeps groups with
 -- at least one table in that state. Groups with problems come first; total_count is the number of matching
--- groups before page_size.
+-- groups before paging.
 WITH latest AS (
   SELECT
     ingestion_group,
@@ -65,4 +66,4 @@ WHERE :status = ''
    OR (:status = 'match' AND match_count > 0)
    OR (:status = 'unchecked' AND unchecked_count > 0)
 ORDER BY error_count DESC, mismatch_count DESC, ingestion_group
-LIMIT :page_size;
+LIMIT :page_size OFFSET :page_offset;

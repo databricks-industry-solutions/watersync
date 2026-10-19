@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
 import { sql } from '@databricks/appkit-ui/js';
 import {
@@ -51,14 +51,23 @@ import { useControl } from '../lib/control';
 import { PageTitle, ErrorState, ScheduleFields } from './shared';
 import { JobComputeFields, NodeTypeOptions, PerformanceTargetField, RunAsFields } from './JobFields';
 import { computeFromForm, useNodeTypes } from '../lib/jobCompute';
+import { FilterBar } from './FilterBar';
+import { Pagination } from './Pagination';
+import { usePageFilters } from '../lib/pageFilters';
+import { usePagination } from '../lib/pagination';
 import type { PerformanceTarget } from '../lib/jobCompute';
 
 export function JobsPage() {
-  const { location, revision } = useControl();
+  const { location, revision, refresh } = useControl();
+  const filters = usePageFilters();
+  const pages = usePagination(filters.key);
   const [jobs, setJobs] = useState<JobRow[]>([]);
+  const [missing, setMissing] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
+  // The group a "Create job" button preselects; empty for the header button.
+  const [dialogGroup, setDialogGroup] = useState('');
   const [runningJob, setRunningJob] = useState<number | null>(null);
   const [scheduleJob, setScheduleJob] = useState<JobRow | null>(null);
   const [view, setView] = useJobsView();
@@ -75,19 +84,49 @@ export function JobsPage() {
     error: groupsError,
   } = useAnalyticsQuery('ingestion_groups', groupParams);
   useReportedFailure('query.ingestion_groups', groupsError, location);
-  const load = () => {
+  // One page of the groups matching the filters; each group has at most one generated job.
+  const pageParams = useMemo(
+    () => ({
+      config_table: sql.string(fqn(location, 'jdbc_ingestion_config')),
+      ...filters.params,
+      ...pages.params,
+      refresh_token: sql.int(revision),
+    }),
+    [location, filters.params, pages.params, revision]
+  );
+  const { data: pageGroups, loading: pageLoading, error: pageError } = useAnalyticsQuery('job_groups', pageParams);
+  useReportedFailure('query.job_groups', pageError, { ...location, group: filters.group, search: filters.search });
+  const total = Number(pageGroups?.[0]?.total_count ?? 0);
+  const groupNames = useMemo(() => (pageGroups ?? []).map((row) => row.ingestion_group), [pageGroups]);
+  const load = useCallback(() => {
+    if (!pageGroups) return;
+    if (!groupNames.length) {
+      setJobs([]);
+      setMissing([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
-    api<{ jobs: JobRow[] }>('/api/jobs')
-      .then((x) => setJobs(x.jobs))
-      .catch((e: unknown) => setError(reportError('jobs.list', e)))
+    const query = new URLSearchParams({ catalog: location.catalog, schema: location.schema });
+    for (const name of groupNames) query.append('group', name);
+    api<{ jobs: JobRow[]; missing: string[] }>(`/api/jobs?${query}`)
+      .then((x) => {
+        setJobs(x.jobs);
+        setMissing(x.missing);
+      })
+      .catch((e: unknown) => setError(reportError('jobs.list', e, { ...location, groups: groupNames.length })))
       .finally(() => setLoading(false));
-  };
-  // Reload on refresh too, e.g. after an import from the header created or updated jobs.
+  }, [location, pageGroups, groupNames]);
+  // Reload when the page of groups changes, including after a refresh or an import from the header.
   useEffect(() => {
     const timer = window.setTimeout(load, 0);
     return () => window.clearTimeout(timer);
-  }, [revision]);
+  }, [load]);
+  const openDialog = (group = '') => {
+    setDialogGroup(group);
+    setOpen(true);
+  };
   const run = async (id: number, fullRefresh = false) => {
     setRunningJob(id);
     try {
@@ -134,35 +173,79 @@ export function JobsPage() {
                 List
               </ToggleGroupItem>
             </ToggleGroup>
-            <Button onClick={() => setOpen(true)}>
+            <Button onClick={() => openDialog()}>
               <Plus className="mr-2 h-4 w-4" />
               Create job
             </Button>
           </div>
         }
       />
-      {error && <ErrorState message={error} />}{' '}
-      {loading ? (
+      <FilterBar location={location} revision={revision} filters={filters} onRefresh={refresh} />
+      {error && <ErrorState message={error} />}
+      {pageError && <ErrorState message={pageError} />}
+      {pageLoading || loading ? (
         <Skeleton className="h-72" />
-      ) : !jobs.length ? (
+      ) : !groupNames.length ? (
         <Empty>
           <EmptyHeader>
-            <EmptyTitle>No jobs visible</EmptyTitle>
+            <EmptyTitle>{filters.filtered ? 'No group matches the filters' : 'No ingestion groups'}</EmptyTitle>
             <EmptyDescription>
-              Grant the app service principal workspace access or create the first job.
+              {filters.filtered
+                ? 'Change or clear the filters to see more jobs.'
+                : 'Add source tables on the Configuration page; each group then gets one job.'}
             </EmptyDescription>
           </EmptyHeader>
+          {filters.filtered && (
+            <Button variant="outline" size="sm" onClick={filters.clear}>
+              Clear filters
+            </Button>
+          )}
         </Empty>
-      ) : view === 'list' ? (
-        <JobList jobs={jobs} actions={actions} />
       ) : (
-        <div className="grid gap-4 lg:grid-cols-2">
-          {jobs.map((job) => (
-            <JobCard key={job.job_id} job={job} actions={actions} />
-          ))}
-        </div>
+        <Card className="overflow-hidden">
+          <div className="p-4">
+            {!jobs.length ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">
+                None of the groups on this page has a job yet.
+              </p>
+            ) : view === 'list' ? (
+              <JobList jobs={jobs} actions={actions} />
+            ) : (
+              <div className="grid gap-4 lg:grid-cols-2">
+                {jobs.map((job) => (
+                  <JobCard key={job.job_id} job={job} actions={actions} />
+                ))}
+              </div>
+            )}
+            {missing.length > 0 && (
+              <div className="mt-4 rounded-lg border border-dashed p-3 text-sm">
+                <div className="mb-2 text-muted-foreground">
+                  {missing.length === 1 ? 'This group has' : `These ${missing.length} groups have`} no job yet:
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {missing.map((group) => (
+                    <Button key={group} variant="outline" size="sm" onClick={() => openDialog(group)}>
+                      <Plus className="mr-1.5 h-3.5 w-3.5" />
+                      {group}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+          <Pagination
+            total={total}
+            page={pages.page}
+            pageSize={pages.pageSize}
+            onPageChange={pages.setPage}
+            onPageSizeChange={pages.setPageSize}
+            noun="groups"
+          />
+        </Card>
       )}
       <JobDialog
+        key={open ? `open-${dialogGroup}` : 'closed'}
+        initialGroup={dialogGroup}
         open={open}
         onOpenChange={setOpen}
         location={location}
@@ -463,6 +546,7 @@ function JobDialog({
   open,
   onOpenChange,
   location,
+  initialGroup,
   groups,
   groupsLoading,
   groupsError,
@@ -471,6 +555,8 @@ function JobDialog({
   open: boolean;
   onOpenChange: (v: boolean) => void;
   location: Location;
+  /** Preselected group; the first group when empty. */
+  initialGroup: string;
   groups: Array<{
     ingestion_group: string;
     source_count: number;
@@ -483,7 +569,7 @@ function JobDialog({
 }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [ingestionGroup, setIngestionGroup] = useState('');
+  const [ingestionGroup, setIngestionGroup] = useState(initialGroup);
   const [scheduleEnabled, setScheduleEnabled] = useState(false);
   const [scheduleActive, setScheduleActive] = useState(true);
   const [gitUrl, setGitUrl] = useState('https://github.com/databricks-industry-solutions/watersync');

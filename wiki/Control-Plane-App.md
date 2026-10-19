@@ -24,12 +24,16 @@ repository or turn it off.
 
 ## Pages
 
+Every page has the same filter bar under its title: an **ingestion group**, up to 8 **picked tables** (a searchable list of the location's tables) and a **table-name search**. Everything on the page follows it, and the filtering runs on the SQL warehouse, so it works the same with thousands of tables. **Clear filters** resets it; each page keeps its own filters.
+
+Lists are paged on the SQL warehouse too: choose **10, 50 or 100 rows per page** (50 by default, remembered in the browser for every list) and move with the first, previous, next and last page buttons. Changing a filter goes back to the first page.
+
 | Page | What it does |
 | --- | --- |
-| **Overview** | Configured, enabled and failed source counts, and the latest pipeline activity, for the selected location |
+| **Overview** | Configured, enabled and failed source counts, and the latest pipeline activity, for the filtered tables of the selected location |
 | **Configuration** | Add, edit and delete config rows. Discover source tables over a UC connection or a JDBC URL (SQL Server, Oracle, PostgreSQL, MySQL), optionally reading another database than the connection's (Oracle: service name), and infer key and watermark columns from primary-key constraints |
 | **Watermarks** | Inspect per-table state and schedule a full refresh for a single table (see [Full Refresh](CDC-Pipeline-and-Full-Refresh#full-refresh)) |
-| **Jobs** | Create or update a group's job and CDC pipeline (see [below](#jobs-created-by-the-app)), run it incrementally or as a full refresh, and edit its schedule. Two views, remembered per browser: **Blocks** (a card per job, the default) and **List** (one table row per job, easier to scan when there are many). Both show each job's status, schedule and last 10 runs |
+| **Jobs** | Create or update a group's job and CDC pipeline (see [below](#jobs-created-by-the-app)), run it incrementally or as a full refresh, and edit its schedule. Lists the job of each group with a matching table, a page of groups at a time; groups without a job yet get a button that opens the dialog for them. Only this location's generated jobs are shown, not every job in the workspace. Two views, remembered per browser: **Blocks** (a card per job, the default) and **List** (one table row per job, easier to scan when there are many). Both show each job's status, schedule and last 10 runs |
 | **Row checks** | Compare each enabled source table with its target: a summary of the latest basic check (row counts, run daily by the location's row check job), daily rows ingested and differences, and per-group then per-table results, all filtered by group, picked tables or table name. Detailed checks (per-chunk sums and hashes, then the rows of differing chunks) are started per table. See [Row Checks](Row-Checks#the-row-checks-page) |
 
 ## Deploying

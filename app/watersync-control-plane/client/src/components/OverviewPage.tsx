@@ -1,7 +1,6 @@
 import { useMemo } from 'react';
 import { sql } from '@databricks/appkit-ui/js';
 import {
-  Button,
   Card,
   CardContent,
   CardDescription,
@@ -20,7 +19,6 @@ import {
   Clock3,
   Droplets,
   Layers3,
-  RefreshCw,
   Settings2,
   TableProperties,
   TriangleAlert,
@@ -30,16 +28,20 @@ import { useReportedFailure } from '../lib/logging';
 import { fqn, displayTime } from '../utils';
 import { useControl } from '../lib/control';
 import { PageTitle, ErrorState, Metric, Hint } from './shared';
+import { FilterBar } from './FilterBar';
+import { usePageFilters } from '../lib/pageFilters';
 
 export function OverviewPage() {
   const { location, revision, refresh } = useControl();
+  const filters = usePageFilters();
   const params = useMemo(
     () => ({
       config_table: sql.string(fqn(location, 'jdbc_ingestion_config')),
       watermark_table: sql.string(fqn(location, 'jdbc_ingestion_watermark')),
+      ...filters.params,
       refresh_token: sql.int(revision),
     }),
-    [location, revision]
+    [location, filters.params, revision]
   );
   const { data, loading, error } = useAnalyticsQuery('config_summary', params);
   useReportedFailure('query.config_summary', error, location);
@@ -49,13 +51,8 @@ export function OverviewPage() {
       <PageTitle
         title="Pipeline health at a glance"
         description={`Actual state from ${location.catalog}.${location.schema}; refreshes on demand.`}
-        action={
-          <Button variant="outline" onClick={refresh}>
-            <RefreshCw className="mr-2 h-4 w-4" />
-            Refresh
-          </Button>
-        }
       />
+      <FilterBar location={location} revision={revision} filters={filters} onRefresh={refresh} />
       {loading ? (
         <div className="grid gap-4 md:grid-cols-4">
           {[1, 2, 3, 4].map((i) => (
@@ -81,7 +78,10 @@ export function OverviewPage() {
                 <div className="mt-3 flex flex-wrap gap-2">
                   <Badge variant="secondary">Schema · {location.schema}</Badge>
                   <Badge variant="outline">SQL warehouse live</Badge>
-                  <Badge variant="outline">{row.enabled_count} sources enabled</Badge>
+                  <Badge variant="outline">
+                    {Number(row.enabled_count).toLocaleString()} sources enabled
+                    {filters.filtered && ` · ${Number(row.group_count).toLocaleString()} filtered groups`}
+                  </Badge>
                 </div>
               </div>
               <div className="hero-health">
@@ -102,20 +102,20 @@ export function OverviewPage() {
               icon={TableProperties}
               tone="info"
               title="Configured sources"
-              value={row.config_count}
-              note="rows · current location"
+              value={Number(row.config_count).toLocaleString()}
+              note={filters.filtered ? 'rows · matching the filters' : 'rows · current location'}
             />
             <Metric
               icon={Layers3}
               tone="success"
               title="Enabled sources"
-              value={row.enabled_count}
+              value={Number(row.enabled_count).toLocaleString()}
               note="actual · current state"
             />
             <Metric
               icon={TriangleAlert}
               title="Failed sources"
-              value={row.failed_count}
+              value={Number(row.failed_count).toLocaleString()}
               note="actual status · investigate"
               destructive={Number(row.failed_count) > 0}
             />

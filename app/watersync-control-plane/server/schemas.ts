@@ -259,6 +259,10 @@ export const rowCheckRunPayloadSchema = locationSchema.extend({
   rangeFrom: z.string().trim().max(64).optional().default(''),
   rangeTo: z.string().trim().max(64).optional().default(''),
 });
+// GET /api/jobs: the groups of one page of the Jobs page (at most 100, the largest page size).
+export const jobsListQuerySchema = locationSchema.extend({
+  group: z.array(z.string().min(1)).max(100),
+});
 export const jobSchedulePayloadSchema = scheduleSchema.extend({ jobId: z.number().int().positive() });
 
 // Entries are kept loose here and validated one by one against configSchema / jobPayloadSchema, with the

@@ -58,6 +58,8 @@ export type JobSchedule = {
 };
 export type JobRow = {
   job_id?: number;
+  /** The ingestion group the job runs (GET /api/jobs lists the jobs of a page of groups). */
+  ingestion_group?: string;
   settings?: {
     name?: string;
     schedule?: JobSchedule;

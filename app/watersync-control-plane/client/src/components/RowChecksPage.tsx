@@ -66,12 +66,14 @@ import { RowCheckDailyChart } from './RowCheckDailyChart';
 import { JobComputeFields, NodeTypeOptions, RunAsFields } from './JobFields';
 import { computeFromForm, useNodeTypes } from '../lib/jobCompute';
 import type { ComputeMode, PerformanceTarget } from '../lib/jobCompute';
-import { RowCheckFilterBar } from './RowCheckFilters';
+import { FilterBar } from './FilterBar';
+import { Pagination } from './Pagination';
 import { RowCheckStatusMap } from './RowCheckStatusMap';
 import { useDailyRowCounts } from '../lib/dailyRowCounts';
 import type { DailyLevel } from '../lib/dailyRowCounts';
-import { MAX_PICKED, pickedTablesParam, tableKey, useDebounced } from '../lib/rowCheckFilters';
-import type { PickedTable } from '../lib/rowCheckFilters';
+import { MAX_PICKED, freeSlot, tableKey, usePageFilters } from '../lib/pageFilters';
+import type { PickedTable } from '../lib/pageFilters';
+import { usePagination } from '../lib/pagination';
 
 type RowCheckRow = QueryRegistry['row_check_results']['result'][number];
 
@@ -85,8 +87,7 @@ const count = (value: number | string | null | undefined) => (value == null ? '�
 const signed = (value: number | string | null | undefined) =>
   value == null ? '—' : `${Number(value) > 0 ? '+' : ''}${Number(value).toLocaleString()}`;
 const pollIntervalMs = 15_000;
-// Tables listed at a time; Show more adds as many again.
-const PAGE_SIZE = 100;
+type Pages = ReturnType<typeof usePagination>;
 type StatusFilter = '' | 'attention' | 'match' | 'unchecked';
 
 const statusStyles = {
@@ -164,14 +165,12 @@ function CheckError({ message }: { message: string | null }) {
 
 export function RowChecksPage() {
   const { location, revision, refresh } = useControl();
-  const [group, setGroup] = useState('');
-  const [searchInput, setSearchInput] = useState('');
-  const [picked, setPicked] = useState<PickedTable[]>([]);
+  const filters = usePageFilters();
+  const { group, search, picked, filtered } = filters;
   const [status, setStatus] = useState<StatusFilter>('');
-  const [pageSize, setPageSize] = useState(PAGE_SIZE);
-  const search = useDebounced(searchInput.trim());
-  const filters = useMemo(() => ({ group, search, picked }), [group, search, picked]);
-  const filtered = Boolean(group || search || picked.length);
+  // The group and table lists each page on their own; both start again when a filter or the status changes.
+  const tablePages = usePagination(`${filters.key}|${status}`);
+  const groupPages = usePagination(status);
   // Nothing selected: a summary per group. A group or a name search: its tables. Picked tables: only those.
   const level: DailyLevel = filtered ? 'table' : 'group';
   const [job, setJob] = useState<RowCheckJob | null>(null);
@@ -187,16 +186,14 @@ export function RowChecksPage() {
     () => ({
       config_table: sql.string(fqn(location, 'jdbc_ingestion_config')),
       row_check_table: sql.string(fqn(location, '_watersync_row_checks')),
-      ingestion_group: sql.string(group),
-      search: sql.string(search),
-      tables: sql.string(pickedTablesParam(picked)),
+      ...filters.params,
       refresh_token: sql.int(revision),
     }),
-    [location, group, search, picked, revision]
+    [location, filters.params, revision]
   );
   const params = useMemo(
-    () => ({ ...filterParams, status: sql.string(status), page_size: sql.int(pageSize) }),
-    [filterParams, status, pageSize]
+    () => ({ ...filterParams, status: sql.string(status), ...tablePages.params }),
+    [filterParams, status, tablePages.params]
   );
   const { data, loading, error } = useAnalyticsQuery('row_check_results', params, { autoStart: level === 'table' });
   useReportedFailure('query.row_check_results', error, { ...location, group, search, status });
@@ -206,10 +203,10 @@ export function RowChecksPage() {
       config_table: filterParams.config_table,
       row_check_table: filterParams.row_check_table,
       status: sql.string(status),
-      page_size: sql.int(pageSize),
+      ...groupPages.params,
       refresh_token: filterParams.refresh_token,
     }),
-    [filterParams, status, pageSize]
+    [filterParams, status, groupPages.params]
   );
   const {
     data: groupRows,
@@ -286,58 +283,27 @@ export function RowChecksPage() {
     };
   }, [summaryRows]);
 
-  // Every filter change starts the table again from its first page.
-  const changeGroup = (next: string) => {
-    setGroup(next);
-    setPageSize(PAGE_SIZE);
-    // Tables of other groups would match nothing once the group is narrowed.
-    if (next) setPicked((current) => current.filter((item) => item.group === next));
-  };
-  const changeSearch = (value: string) => {
-    setSearchInput(value);
-    setPageSize(PAGE_SIZE);
-  };
   // Keep the color the table has in the chart when that slot is free, else take the lowest free slot, so
   // picking a table does not repaint it and tables already picked keep their colors.
   const slotFor = (key: string, current: PickedTable[]) => {
-    const used = new Set(current.map((item) => item.slot));
     const shown = chart.series.findIndex((item) => item.key === key);
     const onScreen = shown >= 0 && shown < MAX_PICKED && !current.length ? shown : -1;
-    return onScreen >= 0 && !used.has(onScreen)
-      ? onScreen
-      : ([...Array(MAX_PICKED).keys()].find((index) => !used.has(index)) ?? 0);
+    return onScreen >= 0 && !current.some((item) => item.slot === onScreen) ? onScreen : freeSlot(current);
   };
-  const toggleTable = (tableGroup: string, table: string) => {
-    setPageSize(PAGE_SIZE);
-    setPicked((current) => {
-      const key = tableKey(tableGroup, table);
-      if (current.some((item) => tableKey(item.group, item.table) === key)) {
-        return current.filter((item) => tableKey(item.group, item.table) !== key);
-      }
-      if (current.length >= MAX_PICKED) return current;
-      return [...current, { group: tableGroup, table, slot: slotFor(key, current) }];
-    });
-  };
+  const toggleTable = (tableGroup: string, table: string) =>
+    filters.toggle(tableGroup, table, slotFor(tableKey(tableGroup, table), picked));
   // A status map square: show only that table, with any status, and scroll to its row. Clicking the only
   // picked table again shows every table.
   const focusTable = (tableGroup: string, table: string) => {
-    const key = tableKey(tableGroup, table);
-    const only = picked.length === 1 && tableKey(picked[0].group, picked[0].table) === key;
-    setPageSize(PAGE_SIZE);
+    const only = picked.length === 1 && tableKey(picked[0].group, picked[0].table) === tableKey(tableGroup, table);
     setStatus('');
-    setPicked(only ? [] : [{ group: tableGroup, table, slot: slotFor(key, []) }]);
+    filters.pickOnly(tableGroup, table, slotFor(tableKey(tableGroup, table), []));
     if (!only) {
       // After the page re-renders with the table list.
       window.requestAnimationFrame(() =>
         document.getElementById('row-check-list')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
       );
     }
-  };
-  const clearFilters = () => {
-    setGroup('');
-    setSearchInput('');
-    setPicked([]);
-    setPageSize(PAGE_SIZE);
   };
 
   return (
@@ -375,17 +341,14 @@ export function RowChecksPage() {
           </AlertDescription>
         </Alert>
       )}
-      <RowCheckFilterBar
+      <FilterBar
         location={location}
         revision={revision}
-        group={group}
-        onGroupChange={changeGroup}
-        searchInput={searchInput}
-        onSearchInputChange={changeSearch}
-        picked={picked}
+        filters={filters}
         onToggle={toggleTable}
-        onClear={clearFilters}
         colors={chart.colors}
+        enabledOnly
+        pickNote=" (one chart color each)"
         onRefresh={refresh}
       />
       <SummaryStrip summary={summary} job={job} loading={summaryLoading} filtered={filtered} />
@@ -407,7 +370,7 @@ export function RowChecksPage() {
             <button
               type="button"
               className="font-normal text-muted-foreground hover:text-foreground hover:underline"
-              onClick={() => changeGroup('')}
+              onClick={() => filters.setGroup('')}
             >
               All groups
             </button>
@@ -419,10 +382,7 @@ export function RowChecksPage() {
         )}
         <Select
           value={status || 'all'}
-          onValueChange={(value) => {
-            setStatus(value === 'all' ? '' : (value as StatusFilter));
-            setPageSize(PAGE_SIZE);
-          }}
+          onValueChange={(value) => setStatus(value === 'all' ? '' : (value as StatusFilter))}
         >
           <SelectTrigger className="h-8 w-48" aria-label="Status">
             <SelectValue />
@@ -434,21 +394,9 @@ export function RowChecksPage() {
             <SelectItem value="unchecked">Not checked</SelectItem>
           </SelectContent>
         </Select>
-        {level === 'group' && !groupsLoading && groupRows && groupRows.length > 0 && (
-          <span className="text-xs text-muted-foreground">
-            {groupRows.length < groupCount
-              ? `Showing ${groupRows.length.toLocaleString()} of ${groupCount.toLocaleString()} groups, problems first`
-              : `${groupCount.toLocaleString()} ${groupCount === 1 ? 'group' : 'groups'}, problems first`}{' '}
-            · open a group to see its tables
-          </span>
-        )}
-        {level === 'table' && !loading && data && data.length > 0 && (
-          <span className="text-xs text-muted-foreground">
-            {data.length < totalCount
-              ? `Showing ${data.length.toLocaleString()} of ${totalCount.toLocaleString()} tables, problems first`
-              : `${totalCount.toLocaleString()} ${totalCount === 1 ? 'table' : 'tables'}, problems first`}
-          </span>
-        )}
+        <span className="text-xs text-muted-foreground">
+          Problems first{level === 'group' && ' · open a group to see its tables'}
+        </span>
       </div>
       {level === 'group' ? (
         <GroupsTable
@@ -457,9 +405,9 @@ export function RowChecksPage() {
           error={groupsError}
           total={groupCount}
           filteredByStatus={Boolean(status)}
-          onOpen={changeGroup}
+          onOpen={filters.setGroup}
           onClearStatus={() => setStatus('')}
-          onShowMore={() => setPageSize((size) => size + PAGE_SIZE)}
+          pages={groupPages}
         />
       ) : loading ? (
         <Skeleton className="h-80" />
@@ -480,7 +428,7 @@ export function RowChecksPage() {
               variant="outline"
               size="sm"
               onClick={() => {
-                clearFilters();
+                filters.clear();
                 setStatus('');
               }}
             >
@@ -596,13 +544,14 @@ export function RowChecksPage() {
               })}
             </TableBody>
           </Table>
-          {data.length < totalCount && (
-            <div className="flex justify-center border-t p-3">
-              <Button variant="outline" size="sm" onClick={() => setPageSize((size) => size + PAGE_SIZE)}>
-                Show {Math.min(PAGE_SIZE, totalCount - data.length).toLocaleString()} more
-              </Button>
-            </div>
-          )}
+          <Pagination
+            total={totalCount}
+            page={tablePages.page}
+            pageSize={tablePages.pageSize}
+            onPageChange={tablePages.setPage}
+            onPageSizeChange={tablePages.setPageSize}
+            noun="tables"
+          />
         </Card>
       )}
       <RowCheckJobDialog
@@ -640,7 +589,7 @@ function GroupsTable({
   filteredByStatus,
   onOpen,
   onClearStatus,
-  onShowMore,
+  pages,
 }: {
   rows: GroupRow[] | null;
   loading: boolean;
@@ -649,7 +598,7 @@ function GroupsTable({
   filteredByStatus: boolean;
   onOpen: (group: string) => void;
   onClearStatus: () => void;
-  onShowMore: () => void;
+  pages: Pages;
 }) {
   if (loading) return <Skeleton className="h-60" />;
   if (error) return <ErrorState message={error} />;
@@ -747,13 +696,14 @@ function GroupsTable({
           })}
         </TableBody>
       </Table>
-      {rows.length < total && (
-        <div className="flex justify-center border-t p-3">
-          <Button variant="outline" size="sm" onClick={onShowMore}>
-            Show {Math.min(PAGE_SIZE, total - rows.length).toLocaleString()} more
-          </Button>
-        </div>
-      )}
+      <Pagination
+        total={total}
+        page={pages.page}
+        pageSize={pages.pageSize}
+        onPageChange={pages.setPage}
+        onPageSizeChange={pages.setPageSize}
+        noun="groups"
+      />
     </Card>
   );
 }

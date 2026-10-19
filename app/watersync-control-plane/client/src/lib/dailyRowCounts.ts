@@ -3,8 +3,8 @@ import { sql } from '@databricks/appkit-ui/js';
 import { useAnalyticsQuery, useChartUITokens, useThemeColors } from '@databricks/appkit-ui/react';
 import type { ChartUITokens, QueryRegistry } from '@databricks/appkit-ui/react';
 import { useReportedFailure } from './logging';
-import { pickedTablesParam, tableKey } from './rowCheckFilters';
-import type { PickedTable, RowCheckFilters } from './rowCheckFilters';
+import { pickedTablesParam, tableKey } from './pageFilters';
+import type { PageFilters, PickedTable } from './pageFilters';
 import type { Location } from '../types';
 import { fqn } from '../utils';
 
@@ -123,7 +123,7 @@ function dailyOptions(
 export type DailyRowCounts = ReturnType<typeof useDailyRowCounts>;
 
 /** The daily row count query for the page filters, shaped into chart series and per-day rows. */
-export function useDailyRowCounts(location: Location, revision: number, filters: RowCheckFilters, level: DailyLevel) {
+export function useDailyRowCounts(location: Location, revision: number, filters: PageFilters, level: DailyLevel) {
   const params = useMemo(
     () => ({
       config_table: sql.string(fqn(location, 'jdbc_ingestion_config')),

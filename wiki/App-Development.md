@@ -164,7 +164,7 @@ npx vitest run
 | `POST /api/config`, `DELETE /api/config`                                                | Save (insert, update or rename) or delete a config row        |
 | `PATCH /api/watermark`, `DELETE /api/watermark`                                         | Update or delete a table's watermark state                    |
 | `POST /api/source-tables`, `POST /api/source-columns`, `POST /api/source-columns-batch` | Source discovery                                              |
-| `GET /api/jobs`                                                                         | Visible jobs with their last 10 runs                          |
+| `GET /api/jobs?catalog=&schema=&group=…`                                                | The location's job of each listed group (at most 100), with its last 10 runs, and the groups without one |
 | `GET /api/node-types`                                                                   | Node types for compute settings, with a default               |
 | `POST /api/jobs`                                                                        | Create or update a group's job and CDC pipeline               |
 | `POST /api/jobs/:jobId/run`, `PATCH /api/jobs/:jobId/schedule`                          | Run a job (optionally as a full refresh), change its schedule |

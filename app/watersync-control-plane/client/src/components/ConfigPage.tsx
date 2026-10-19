@@ -62,10 +62,15 @@ import {
 } from '../utils';
 import { useControl } from '../lib/control';
 import { PageTitle, ErrorState, ControlledField, ColumnSelect, Field, Toggle } from './shared';
+import { FilterBar } from './FilterBar';
+import { Pagination } from './Pagination';
+import { usePageFilters } from '../lib/pageFilters';
+import { usePagination } from '../lib/pagination';
 
 export function ConfigPage() {
   const { location, revision, refresh } = useControl();
-  const [search, setSearch] = useState('');
+  const filters = usePageFilters();
+  const pages = usePagination(filters.key);
   const [editing, setEditing] = useState<ConfigRow | null>(null);
   const [open, setOpen] = useState(false);
   const [discoveryOpen, setDiscoveryOpen] = useState(false);
@@ -73,15 +78,15 @@ export function ConfigPage() {
   const params = useMemo(
     () => ({
       table_name: sql.string(fqn(location, 'jdbc_ingestion_config')),
-      search: sql.string(search),
-      page_size: sql.int(100),
-      page_offset: sql.int(0),
+      ...filters.params,
+      ...pages.params,
       refresh_token: sql.int(revision),
     }),
-    [location, search, revision]
+    [location, filters.params, pages.params, revision]
   );
   const { data, loading, error } = useAnalyticsQuery('config_entries', params);
-  useReportedFailure('query.config_entries', error, { ...location, search });
+  useReportedFailure('query.config_entries', error, { ...location, group: filters.group, search: filters.search });
+  const total = Number(data?.[0]?.total_count ?? 0);
   const remove = async (row: ConfigRow) => {
     if (!confirm(`Delete ${row.ingestion_group} / ${row.source_table_name}?`)) return;
     try {
@@ -108,7 +113,7 @@ export function ConfigPage() {
     <>
       <PageTitle
         title="Ingestion configuration"
-        description="Exact WaterSync source mappings; first 100 filtered rows."
+        description="Exact WaterSync source mappings, filtered and paged on the SQL warehouse."
         action={
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" onClick={() => setDiscoveryOpen(true)}>
@@ -125,17 +130,7 @@ export function ConfigPage() {
           </div>
         }
       />
-      <div className="mb-4 flex gap-2">
-        <Input
-          aria-label="Filter configurations"
-          placeholder="Filter group or source table"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-        <Button variant="outline" onClick={refresh}>
-          <RefreshCw className="h-4 w-4" />
-        </Button>
-      </div>
+      <FilterBar location={location} revision={revision} filters={filters} onRefresh={refresh} />
       {message && <ErrorState message={message} />}{' '}
       {loading ? (
         <Skeleton className="h-80" />
@@ -144,9 +139,20 @@ export function ConfigPage() {
       ) : !data?.length ? (
         <Empty>
           <EmptyHeader>
-            <EmptyTitle>No configuration entries</EmptyTitle>
-            <EmptyDescription>Add a JDBC source or change the selected metadata location.</EmptyDescription>
+            <EmptyTitle>
+              {filters.filtered ? 'No configuration entry matches the filters' : 'No configuration entries'}
+            </EmptyTitle>
+            <EmptyDescription>
+              {filters.filtered
+                ? 'Change or clear the filters to see more tables.'
+                : 'Add a JDBC source or change the selected metadata location.'}
+            </EmptyDescription>
           </EmptyHeader>
+          {filters.filtered && (
+            <Button variant="outline" size="sm" onClick={filters.clear}>
+              Clear filters
+            </Button>
+          )}
         </Empty>
       ) : (
         <Card>
@@ -199,6 +205,14 @@ export function ConfigPage() {
               ))}
             </TableBody>
           </Table>
+          <Pagination
+            total={total}
+            page={pages.page}
+            pageSize={pages.pageSize}
+            onPageChange={pages.setPage}
+            onPageSizeChange={pages.setPageSize}
+            noun="tables"
+          />
         </Card>
       )}
       <ConfigDialog

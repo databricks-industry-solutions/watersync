@@ -5,11 +5,12 @@
 -- @param tables STRING
 -- @param status STRING
 -- @param page_size INT
+-- @param page_offset INT
 -- @param refresh_token INT
 -- The latest basic and detailed result of each enabled table matching the page filters: ingestion_group ('' for
 -- all), search (a substring of the table name), tables (a JSON array of {"group", "table"}; empty for all) and
 -- status ('' for all, 'attention' for a mismatch or error in either check, 'match', 'unchecked'). Problems come
--- first; total_count is the number of matching tables before page_size.
+-- first; total_count is the number of matching tables before paging.
 WITH picked AS (
   SELECT from_json(nullif(:tables, ''), 'array<struct<group:string,table:string>>') AS tables
 ),
@@ -81,4 +82,4 @@ WHERE :status = ''
    OR (:status = 'match' AND severity = 2)
    OR (:status = 'unchecked' AND severity = 3)
 ORDER BY severity, ingestion_group, source_table_name
-LIMIT :page_size;
+LIMIT :page_size OFFSET :page_offset;
