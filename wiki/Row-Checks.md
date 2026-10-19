@@ -85,6 +85,7 @@ The page of the [Control Plane App](Control-Plane-App) shows, from top to bottom
 
 - **Filter bar.** A group, up to 8 picked tables (one per chart color) and a table-name search, applied to every section below. The filtering runs on the SQL warehouse, so the page works the same with thousands of tables.
 - **Summary.** One line with the latest basic check of the filtered tables: how many match, differ or failed, the last check and the schedule.
+- **Status of every table.** One square per enabled table, grouped by ingestion group and coloured by its worst latest result, basic or detailed: error, mismatch, match or not checked. Click a square to show only that table, with any status, and jump to its row; click it again to show every table. The map follows the group and name filters but not picked tables, so every table stays visible while one is picked. Above 300 tables the squares shrink and the map scrolls; it shows at most 5,000 tables.
 - **Daily row counts.** For the last 30 days (UTC), from each day's last whole-table basic check: the rows ingested per day (the target's growth since the previous checked day, net of deletes; on the first checked day, since that day's first check) and the target − source difference. Unless tables are picked, the 7 series with the most rows ingested are shown by name and the others add up into "Other".
 - **Recent check runs** of the row check job.
 - **Groups or tables**, problems first, 100 at a time with **Show more**, narrowed further by status (needs attention, match, not checked).

@@ -105,6 +105,17 @@ declare module '@databricks/appkit-ui/react' {
         count_diff: number | string | null;
       }>;
     };
+    row_check_status_map: {
+      name: 'row_check_status_map';
+      parameters: {
+        config_table: StringParam;
+        row_check_table: StringParam;
+        ingestion_group: StringParam;
+        search: StringParam;
+        refresh_token: IntParam;
+      };
+      result: Array<{ ingestion_group: string; source_table_name: string; state: string }>;
+    };
     row_check_table_options: {
       name: 'row_check_table_options';
       parameters: {

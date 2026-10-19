@@ -67,6 +67,7 @@ import { JobComputeFields, NodeTypeOptions, RunAsFields } from './JobFields';
 import { computeFromForm, useNodeTypes } from '../lib/jobCompute';
 import type { ComputeMode, PerformanceTarget } from '../lib/jobCompute';
 import { RowCheckFilterBar } from './RowCheckFilters';
+import { RowCheckStatusMap } from './RowCheckStatusMap';
 import { useDailyRowCounts } from '../lib/dailyRowCounts';
 import type { DailyLevel } from '../lib/dailyRowCounts';
 import { MAX_PICKED, pickedTablesParam, tableKey, useDebounced } from '../lib/rowCheckFilters';
@@ -296,6 +297,16 @@ export function RowChecksPage() {
     setSearchInput(value);
     setPageSize(PAGE_SIZE);
   };
+  // Keep the color the table has in the chart when that slot is free, else take the lowest free slot, so
+  // picking a table does not repaint it and tables already picked keep their colors.
+  const slotFor = (key: string, current: PickedTable[]) => {
+    const used = new Set(current.map((item) => item.slot));
+    const shown = chart.series.findIndex((item) => item.key === key);
+    const onScreen = shown >= 0 && shown < MAX_PICKED && !current.length ? shown : -1;
+    return onScreen >= 0 && !used.has(onScreen)
+      ? onScreen
+      : ([...Array(MAX_PICKED).keys()].find((index) => !used.has(index)) ?? 0);
+  };
   const toggleTable = (tableGroup: string, table: string) => {
     setPageSize(PAGE_SIZE);
     setPicked((current) => {
@@ -304,17 +315,23 @@ export function RowChecksPage() {
         return current.filter((item) => tableKey(item.group, item.table) !== key);
       }
       if (current.length >= MAX_PICKED) return current;
-      // Keep the color the table has in the chart when that slot is free, else take the lowest free slot, so
-      // picking a table does not repaint it and tables already picked keep their colors.
-      const used = new Set(current.map((item) => item.slot));
-      const shown = chart.series.findIndex((item) => item.key === key);
-      const onScreen = shown >= 0 && shown < MAX_PICKED && !current.length ? shown : -1;
-      const slot =
-        onScreen >= 0 && !used.has(onScreen)
-          ? onScreen
-          : ([...Array(MAX_PICKED).keys()].find((index) => !used.has(index)) ?? 0);
-      return [...current, { group: tableGroup, table, slot }];
+      return [...current, { group: tableGroup, table, slot: slotFor(key, current) }];
     });
+  };
+  // A status map square: show only that table, with any status, and scroll to its row. Clicking the only
+  // picked table again shows every table.
+  const focusTable = (tableGroup: string, table: string) => {
+    const key = tableKey(tableGroup, table);
+    const only = picked.length === 1 && tableKey(picked[0].group, picked[0].table) === key;
+    setPageSize(PAGE_SIZE);
+    setStatus('');
+    setPicked(only ? [] : [{ group: tableGroup, table, slot: slotFor(key, []) }]);
+    if (!only) {
+      // After the page re-renders with the table list.
+      window.requestAnimationFrame(() =>
+        document.getElementById('row-check-list')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      );
+    }
   };
   const clearFilters = () => {
     setGroup('');
@@ -372,9 +389,17 @@ export function RowChecksPage() {
         onRefresh={refresh}
       />
       <SummaryStrip summary={summary} job={job} loading={summaryLoading} filtered={filtered} />
+      <RowCheckStatusMap
+        location={location}
+        revision={revision}
+        group={group}
+        search={search}
+        picked={picked}
+        onSelect={focusTable}
+      />
       <RowCheckDailyChart chart={chart} picked={picked.length} filtered={filtered} />
       {job && <RunStrip job={job} activeRuns={activeRuns} />}
-      <div className="mb-3 flex flex-wrap items-center gap-3">
+      <div id="row-check-list" className="mb-3 flex scroll-mt-4 flex-wrap items-center gap-3">
         {level === 'group' ? (
           <h2 className="text-base font-semibold">Groups</h2>
         ) : group && !picked.length && !search ? (
