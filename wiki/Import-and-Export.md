@@ -28,7 +28,7 @@ The script calls the deployed app, so validation, the config write, and job crea
 | Included                                                                                       | Not included                                                              |
 | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | Every row of `jdbc_ingestion_config` in the location                                           | Watermarks (`jdbc_ingestion_watermark`): runtime state                    |
-| Each group's job settings: Git source, parallelism, schedule, job compute, SDP compute, run as | Secret **values**: only secret scope/key and UC secret names are exported |
+| Each group's job settings: Git source, parallelism, schedule, job compute, SDP compute, run as, and its scheduled [row checks](Row-Checks#scheduled-checks-per-group) | Secret **values**: only secret scope/key and UC secret names are exported |
 |                                                                                                | Job run history, job IDs and permissions                                  |
 
 Job settings are **read back from the Databricks API** at export time, from the job named
@@ -77,6 +77,9 @@ Without `--output`, the file is written to stdout.
 5. Optionally (**Create or update jobs** / `--deploy-jobs`), **creates or updates the job** of every group with
    job settings, exactly as the **Jobs** page does:
    - The job is matched by name, `[<group>] Ingestion Pipeline`, and updated in place if it exists.
+   - The group's scheduled row check jobs, `[<group>] Row Check (basic)` and `(detailed)`, are created or updated
+     with it, with the same Git source, compute and identity. A check that is off in the file keeps an existing
+     job but removes its schedule.
    - A group with enabled incremental (or snapshot CDC) tables gets a CDC pipeline. A pipeline WaterSync
      provisioned in the source is provisioned again in the target; a pipeline that was supplied by ID keeps that
      ID (see [Limitations](#limitations)).

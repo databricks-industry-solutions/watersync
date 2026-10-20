@@ -60,6 +60,11 @@ export type JobRow = {
   job_id?: number;
   /** The ingestion group the job runs (GET /api/jobs lists the jobs of a page of groups). */
   ingestion_group?: string;
+  /** The group's scheduled row check jobs; null when a check has no job. */
+  row_checks?: Record<
+    'basic' | 'detailed',
+    { job_id: number; schedule: JobSchedule | null; workspace_url: string } | null
+  >;
   settings?: {
     name?: string;
     schedule?: JobSchedule;
@@ -90,12 +95,20 @@ export type TableDraft = {
 /** Latest published WaterSync release, as returned by GET /api/latest-release. */
 export type LatestRelease = { version: string; name: string; notes: string; url: string; publishedAt: string | null };
 export type InferenceProgress = { completed: number; total: number };
-export type ImportGroupSummary = { ingestionGroup: string; configCount: number; hasJobSettings: boolean };
+export type ImportGroupSummary = {
+  ingestionGroup: string;
+  configCount: number;
+  hasJobSettings: boolean;
+  /** Scheduled row checks the group's job settings turn on: basic, detailed. */
+  rowChecks: Array<'basic' | 'detailed'>;
+};
 export type ImportJobResult = {
   ingestionGroup: string;
   jobId?: number;
   pipelineId?: string;
   action?: 'created' | 'updated';
+  /** The group's scheduled row check jobs, saved with its ingestion job. */
+  rowCheckJobs?: Partial<Record<'basic' | 'detailed', { jobId?: number; action: string }>>;
   error?: string;
 };
 export type ImportResult = {

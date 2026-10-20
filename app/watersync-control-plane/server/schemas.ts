@@ -215,6 +215,31 @@ export const toRunAs = (target: RunAsTarget) =>
     : target.mode === 'SERVICE_PRINCIPAL'
       ? { service_principal_name: target.principal }
       : undefined;
+// A detailed check's range start: a number, a date, a timestamp or days back (-30d); empty checks every row.
+const rangeBound = z
+  .string()
+  .trim()
+  .regex(
+    /^$|^-?\d+(\.\d+)?$|^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}:\d{2})?$|^-\d{1,5}d$/,
+    'Use a number, a date (2026-09-01), a timestamp (2026-09-01 12:00:00) or days back (-30d)'
+  );
+// Each group can have a scheduled basic check (row counts) and a scheduled detailed check, each its own job
+// next to the group's ingestion job. The prefaults keep job settings exported before they existed importable.
+export const groupRowChecksSchema = z.object({
+  maxParallelTables: z.number().int().min(1).max(32).optional().default(4),
+  basic: scheduleSchema.prefault({
+    enabled: false,
+    quartzCronExpression: '0 0 6 * * ?',
+    timezoneId: 'UTC',
+    pauseStatus: 'UNPAUSED',
+  }),
+  detailed: scheduleSchema.extend({ rangeFrom: rangeBound.optional().default('') }).prefault({
+    enabled: false,
+    quartzCronExpression: '0 0 7 ? * SUN',
+    timezoneId: 'UTC',
+    pauseStatus: 'UNPAUSED',
+  }),
+});
 export const jobPayloadSchema = locationSchema.extend({
   ingestionGroup: z.string().min(1),
   gitUrl: z.url().refine((value) => new URL(value).hostname === 'github.com', 'Repository must be hosted on GitHub'),
@@ -230,6 +255,7 @@ export const jobPayloadSchema = locationSchema.extend({
   compute: computeSchema,
   pipelineCompute: pipelineComputeSchema.prefault({ mode: 'SERVERLESS' }),
   runAs: runAsSchema.prefault({}),
+  rowChecks: groupRowChecksSchema.prefault({}),
 });
 export const rowCheckJobPayloadSchema = locationSchema.extend({
   gitUrl: jobPayloadSchema.shape.gitUrl,
@@ -292,6 +318,7 @@ export type JobCompute = z.infer<typeof computeSchema>;
 export type Schedule = z.infer<typeof scheduleSchema>;
 export type ConfigPayload = z.infer<typeof configSchema>;
 export type JobPayload = z.infer<typeof jobPayloadSchema>;
+export type GroupRowChecks = z.infer<typeof groupRowChecksSchema>;
 export type RowCheckJobPayload = z.infer<typeof rowCheckJobPayloadSchema>;
 export type RowCheckRunPayload = z.infer<typeof rowCheckRunPayloadSchema>;
 /** Job settings as stored and exported: the job payload without the location it was deployed to. */

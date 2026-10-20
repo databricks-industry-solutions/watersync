@@ -45,13 +45,6 @@ export const displayTime = (value: string | number | null | undefined) =>
 
 export const runStatus = (run?: JobRun) => run?.state?.result_state ?? run?.state?.life_cycle_state ?? 'NEVER_RUN';
 
-export const statusVariant = (status: string): 'default' | 'secondary' | 'destructive' | 'outline' => {
-  if (status === 'SUCCESS') return 'default';
-  if (['FAILED', 'TIMEDOUT', 'CANCELED', 'INTERNAL_ERROR'].includes(status)) return 'destructive';
-  if (['RUNNING', 'PENDING', 'QUEUED', 'TERMINATING'].includes(status)) return 'secondary';
-  return 'outline';
-};
-
 export const runDuration = (run: JobRun) => {
   const duration =
     run.end_time && run.start_time

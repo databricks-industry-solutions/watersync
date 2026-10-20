@@ -60,7 +60,11 @@ class WaterSyncConfigScriptTest(unittest.TestCase):
             "/api/import": [FakeResponse(200, IMPORTED)],
             "/api/jobs": [
                 FakeResponse(200, {"jobId": 1, "pipelineId": "p", "action": "created"}),
-                FakeResponse(200, {"jobId": 2, "action": "updated"}),
+                FakeResponse(200, {
+                    "jobId": 2,
+                    "action": "updated",
+                    "rowCheckJobs": {"basic": {"jobId": 3, "action": "created"}},
+                }),
             ],
         })
         logs: list[str] = []
@@ -77,6 +81,7 @@ class WaterSyncConfigScriptTest(unittest.TestCase):
         self.assertEqual([body["ingestionGroup"] for body in job_bodies], ["hr", "sales"])
         self.assertTrue(all(body["catalog"] == "prod" and body["schema"] == "ws" for body in job_bodies))
         self.assertIn("Job for hr: created job 1, CDC pipeline p", logs)
+        self.assertIn("Job for sales: updated job 2, basic row check job 3 created", logs)
 
     def test_a_failing_job_does_not_stop_the_others_but_fails_the_import(self) -> None:
         session = FakeSession({

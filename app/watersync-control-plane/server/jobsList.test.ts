@@ -53,6 +53,7 @@ describe('listGroupJobs', () => {
       workspace_url: 'https://example.cloud.databricks.com/jobs/1',
     });
     expect(result.jobs[0].runs).toHaveLength(10);
+    expect(result.jobs[0].row_checks).toEqual({ basic: null, detailed: null });
     expect(result.jobs[0].runs[0].run_url).toBe('https://example.cloud.databricks.com/jobs/1/runs/100');
     // ops has a job of that name, but for another location.
     expect(result.missing).toEqual(['ops', 'hr']);
@@ -61,8 +62,12 @@ describe('listGroupJobs', () => {
   it('looks jobs up by name only for the groups asked for', async () => {
     workspace.jobs.list.mockClear();
     await listGroupJobs('dev', 'watersync', ['sales']);
-    expect(workspace.jobs.list).toHaveBeenCalledTimes(1);
-    expect(workspace.jobs.list).toHaveBeenCalledWith(expect.objectContaining({ name: '[sales] Ingestion Pipeline' }));
+    // The group's ingestion job, then its two scheduled row check jobs.
+    expect(workspace.jobs.list.mock.calls.map(([options]) => options.name)).toEqual([
+      '[sales] Ingestion Pipeline',
+      '[sales] Row Check (basic)',
+      '[sales] Row Check (detailed)',
+    ]);
   });
 });
 

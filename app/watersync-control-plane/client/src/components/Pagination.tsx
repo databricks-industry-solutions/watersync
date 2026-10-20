@@ -11,6 +11,7 @@ export function Pagination({
   onPageChange,
   onPageSizeChange,
   noun = 'rows',
+  bordered = true,
 }: {
   total: number;
   page: number;
@@ -19,6 +20,8 @@ export function Pagination({
   onPageSizeChange: (size: PageSize) => void;
   /** Plural, e.g. "tables"; the singular drops the final s. */
   noun?: string;
+  /** A top border separating it from the list above; off when the pager stands in its own card. */
+  bordered?: boolean;
 }) {
   const info = pageInfo(total, page, pageSize);
   const unit = total === 1 ? noun.replace(/s$/, '') : noun;
@@ -36,7 +39,10 @@ export function Pagination({
     </Button>
   );
   return (
-    <nav className="flex flex-wrap items-center justify-between gap-3 border-t px-4 py-3 text-sm" aria-label="Pages">
+    <nav
+      className={`flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm ${bordered ? 'border-t' : ''}`}
+      aria-label="Pages"
+    >
       <span className="text-muted-foreground tabular-nums">
         {total
           ? `${info.first.toLocaleString()}–${info.last.toLocaleString()} of ${total.toLocaleString()} ${unit}`

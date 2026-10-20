@@ -148,6 +148,22 @@ The schedule (`0 0 6 * * ?`, UTC, by default) runs the basic check of every tabl
 
 Whichever identity the job runs as needs the same source access as the ingestion jobs (UC connections, secret scopes or UC secrets) and `SELECT` on the target tables. Running as a user or another service principal has the same requirements for the app as for an ingestion job.
 
+## Scheduled checks per group
+
+The **Row checks** tab of a group's job dialog on the **Jobs** page schedules that group's checks, so a group goes to production with its ingestion and its validation together. Each check is its own job, next to the group's ingestion job:
+
+| Job | Runs | Default |
+| --- | --- | --- |
+| `[<group>] Row Check (basic)` | The basic check of every enabled table of the group | On, `0 0 6 * * ?` (daily, 06:00 UTC) |
+| `[<group>] Row Check (detailed)` | The detailed check of every enabled table of the group, optionally only from a [range](#checking-a-range) start such as `-30d` | Off, `0 0 7 ? * SUN` (weekly, Sunday 07:00 UTC) |
+
+- **Same settings as ingestion:** both jobs take the ingestion job's Git source, Job Compute (serverless or job cluster) and job identity, so the checks can read the same sources. They write to the same results table, so their results appear on the **Row checks** page.
+- **Turning a check off** removes its job's schedule but keeps the job, with its run history and **Run now**. A check that was never turned on gets no job.
+- **Visibility:** each job card on the **Jobs** page shows the group's row check schedules, linking to their jobs.
+- **Export and import:** [export](Import-and-Export) reads the schedules back from these jobs, and an import with **Create or update jobs** creates or updates them with the group's ingestion job. Files exported before this existed import with both checks off.
+
+The location's `[<catalog>.<schema>] Row Checks` job, set up on the **Row checks** page, is still the one **Run basic check** and **Detailed check** start there.
+
 ## From Python or the CLI
 
 ```python

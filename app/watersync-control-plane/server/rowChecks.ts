@@ -1,10 +1,18 @@
 import type { jobs } from '@databricks/sdk-experimental';
-import { toRunAs } from './schemas.js';
-import type { RowCheckJobPayload, RowCheckRunPayload } from './schemas.js';
+import { groupRowChecksSchema, toRunAs } from './schemas.js';
+import type {
+  GroupRowChecks,
+  JobCompute,
+  JobPayload,
+  RowCheckJobPayload,
+  RowCheckRunPayload,
+  RunAsTarget,
+  Schedule,
+} from './schemas.js';
 import { workspace, workspaceBaseUrl } from './sql.js';
 import { watersyncDependency } from './pipelines.js';
 import { logger } from './logging.js';
-import { jobCompute, readJobCompute, runAsIdentity, runAsTarget } from './jobCompute.js';
+import { findLocationJob, jobCompute, readJobCompute, runAsIdentity, runAsTarget, upsertJob } from './jobCompute.js';
 
 export const rowCheckNotebookPath = 'notebooks/Task - Row Check';
 const taskKey = 'row_check';
@@ -26,29 +34,45 @@ const parameterValue = (run: jobs.BaseRun, name: string) => {
   return item?.value ?? item?.default ?? '';
 };
 
-/** Creates or updates the location's row check job. Its default run is the basic check, on the schedule. */
-export async function saveRowCheckJob(body: RowCheckJobPayload) {
-  const name = rowCheckJobName(body.catalog, body.schema);
-  const compute = jobCompute(body.compute, watersyncDependency(body.gitUrl, body.gitBranch));
-  const runAs = toRunAs(body.runAs);
-  const settings: jobs.JobSettings = {
-    name,
-    description: 'Compares WaterSync source tables with their targets. Created by the WaterSync control plane.',
-    // Lets a detailed check started from the app run while the scheduled basic check is still going.
+type RowCheckJobOptions = {
+  catalog: string;
+  schema: string;
+  name: string;
+  description: string;
+  gitUrl: string;
+  gitBranch: string;
+  compute: JobCompute;
+  runAs: RunAsTarget;
+  maxParallelTables: number;
+  schedule: Schedule;
+  // The defaults of a run started by the schedule or with "Run now".
+  checkMode: 'basic' | 'detailed';
+  ingestionGroup: string;
+  rangeFrom: string;
+};
+
+/** The settings of a row check job: the location's job and each group's scheduled jobs share this shape. */
+function rowCheckJobSettings(options: RowCheckJobOptions): jobs.JobSettings {
+  const compute = jobCompute(options.compute, watersyncDependency(options.gitUrl, options.gitBranch));
+  const runAs = toRunAs(options.runAs);
+  return {
+    name: options.name,
+    description: options.description,
+    // Lets a detailed check started from the app run while a scheduled check is still going.
     max_concurrent_runs: 4,
     ...compute.settings,
-    ...(body.compute.mode === 'SERVERLESS' ? { performance_target: body.compute.performanceTarget } : {}),
+    ...(options.compute.mode === 'SERVERLESS' ? { performance_target: options.compute.performanceTarget } : {}),
     ...(runAs ? { run_as: runAs } : {}),
     parameters: [
-      { name: 'configuration_fqn', default: `${body.catalog}.${body.schema}.jdbc_ingestion_config` },
-      { name: 'watermark_fqn', default: `${body.catalog}.${body.schema}.jdbc_ingestion_watermark` },
-      { name: 'row_check_fqn', default: rowCheckFqn(body.catalog, body.schema) },
-      { name: 'check_mode', default: 'basic' },
-      { name: 'ingestion_group', default: '' },
+      { name: 'configuration_fqn', default: `${options.catalog}.${options.schema}.jdbc_ingestion_config` },
+      { name: 'watermark_fqn', default: `${options.catalog}.${options.schema}.jdbc_ingestion_watermark` },
+      { name: 'row_check_fqn', default: rowCheckFqn(options.catalog, options.schema) },
+      { name: 'check_mode', default: options.checkMode },
+      { name: 'ingestion_group', default: options.ingestionGroup },
       { name: 'source_table_name', default: '' },
-      { name: 'max_parallel_tables', default: String(body.maxParallelTables) },
+      { name: 'max_parallel_tables', default: String(options.maxParallelTables) },
       { name: 'range_column', default: '' },
-      { name: 'range_from', default: '' },
+      { name: 'range_from', default: options.rangeFrom },
       { name: 'range_to', default: '' },
     ],
     tasks: [
@@ -62,25 +86,31 @@ export async function saveRowCheckJob(body: RowCheckJobPayload) {
         },
       },
     ],
-    git_source: { git_url: body.gitUrl, git_provider: 'gitHub', git_branch: body.gitBranch },
-    ...(body.schedule.enabled
+    git_source: { git_url: options.gitUrl, git_provider: 'gitHub', git_branch: options.gitBranch },
+    ...(options.schedule.enabled
       ? {
           schedule: {
-            quartz_cron_expression: body.schedule.quartzCronExpression,
-            timezone_id: body.schedule.timezoneId,
-            pause_status: body.schedule.pauseStatus,
+            quartz_cron_expression: options.schedule.quartzCronExpression,
+            timezone_id: options.schedule.timezoneId,
+            pause_status: options.schedule.pauseStatus,
           },
         }
       : {}),
   };
-  const existingJobId = await findRowCheckJob(body.catalog, body.schema);
-  let jobId = existingJobId;
-  if (existingJobId) {
-    await workspace.jobs.reset({ job_id: existingJobId, new_settings: settings });
-  } else {
-    jobId = (await workspace.jobs.create(settings as jobs.CreateJob)).job_id;
-  }
-  const action: 'created' | 'updated' = existingJobId ? 'updated' : 'created';
+}
+
+/** Creates or updates the location's row check job. Its default run is the basic check, on the schedule. */
+export async function saveRowCheckJob(body: RowCheckJobPayload) {
+  const name = rowCheckJobName(body.catalog, body.schema);
+  const settings = rowCheckJobSettings({
+    ...body,
+    name,
+    description: 'Compares WaterSync source tables with their targets. Created by the WaterSync control plane.',
+    checkMode: 'basic',
+    ingestionGroup: '',
+    rangeFrom: '',
+  });
+  const { jobId, action } = await upsertJob(await findRowCheckJob(body.catalog, body.schema), settings);
   logger.info('row_checks.job_saved', {
     action,
     jobId,
@@ -90,6 +120,81 @@ export async function saveRowCheckJob(body: RowCheckJobPayload) {
     runAs: body.runAs.mode,
   });
   return { jobId, action };
+}
+
+// ── Scheduled checks per group ───────────────────────────────────
+
+export type GroupCheckMode = 'basic' | 'detailed';
+export const groupCheckModes: GroupCheckMode[] = ['basic', 'detailed'];
+/** The job that runs one group's scheduled basic or detailed check, next to its "[group] Ingestion Pipeline". */
+export const groupRowCheckJobName = (ingestionGroup: string, mode: GroupCheckMode) =>
+  `[${ingestionGroup}] Row Check (${mode})`;
+const configurationFqnOf = (catalog: string, schema: string) => `${catalog}.${schema}.jdbc_ingestion_config`;
+
+/**
+ * Creates or updates a group's scheduled row check jobs, with the ingestion job's Git source, compute and
+ * identity. A check that is turned off keeps its job without a schedule, so its run history and manual runs
+ * stay; a check that was never turned on gets no job.
+ */
+export async function saveGroupRowCheckJobs(body: JobPayload) {
+  const configurationFqn = configurationFqnOf(body.catalog, body.schema);
+  const results: Partial<Record<GroupCheckMode, { jobId?: number; action: 'created' | 'updated' | 'unscheduled' }>> =
+    {};
+  for (const mode of groupCheckModes) {
+    const check = body.rowChecks[mode];
+    const name = groupRowCheckJobName(body.ingestionGroup, mode);
+    const existing = await findLocationJob(name, configurationFqn);
+    if (!check.enabled && !existing) continue;
+    const settings = rowCheckJobSettings({
+      catalog: body.catalog,
+      schema: body.schema,
+      name,
+      description: `Scheduled ${mode} row check of the ${body.ingestionGroup} group. Created by the WaterSync control plane.`,
+      gitUrl: body.gitUrl,
+      gitBranch: body.gitBranch,
+      compute: body.compute,
+      runAs: body.runAs.job,
+      maxParallelTables: body.rowChecks.maxParallelTables,
+      schedule: check,
+      checkMode: mode,
+      ingestionGroup: body.ingestionGroup,
+      rangeFrom: mode === 'detailed' ? body.rowChecks.detailed.rangeFrom : '',
+    });
+    const { jobId, action } = await upsertJob(existing?.job_id, settings);
+    results[mode] = { jobId, action: check.enabled ? action : 'unscheduled' };
+  }
+  logger.info('row_checks.group_jobs_saved', { ingestionGroup: body.ingestionGroup, results });
+  return results;
+}
+
+const scheduleOf = (job: jobs.Job | undefined, fallback: Schedule): Schedule =>
+  job?.settings?.schedule
+    ? {
+        enabled: true,
+        quartzCronExpression: job.settings.schedule.quartz_cron_expression,
+        timezoneId: job.settings.schedule.timezone_id,
+        pauseStatus: job.settings.schedule.pause_status ?? 'UNPAUSED',
+      }
+    : { ...fallback, enabled: false };
+
+/** A group's scheduled row checks, read back from their jobs (for export and the Jobs page). */
+export async function readGroupRowChecks(
+  catalog: string,
+  schema: string,
+  ingestionGroup: string
+): Promise<GroupRowChecks> {
+  const configurationFqn = configurationFqnOf(catalog, schema);
+  const [basic, detailed] = await Promise.all(
+    groupCheckModes.map((mode) => findLocationJob(groupRowCheckJobName(ingestionGroup, mode), configurationFqn))
+  );
+  const parameter = (job: jobs.Job | undefined, name: string) =>
+    job?.settings?.parameters?.find((item) => item.name === name)?.default ?? '';
+  const defaults = groupRowChecksSchema.parse({});
+  return {
+    maxParallelTables: Number(parameter(basic ?? detailed, 'max_parallel_tables')) || defaults.maxParallelTables,
+    basic: scheduleOf(basic, defaults.basic),
+    detailed: { ...scheduleOf(detailed, defaults.detailed), rangeFrom: parameter(detailed, 'range_from') },
+  };
 }
 
 /** The location's row check job as the Databricks API reports it, with its recent runs; null when there is none. */

@@ -97,9 +97,37 @@ describe('importSummary', () => {
       },
     });
     expect(importSummary(configs, jobs)).toEqual([
-      { ingestionGroup: 'hr', configCount: 1, hasJobSettings: false },
-      { ingestionGroup: 'sales', configCount: 2, hasJobSettings: true },
+      { ingestionGroup: 'hr', configCount: 1, hasJobSettings: false, rowChecks: [] },
+      { ingestionGroup: 'sales', configCount: 2, hasJobSettings: true, rowChecks: [] },
     ]);
+  });
+});
+
+describe('scheduled row checks in a file', () => {
+  const on = { enabled: true, quartzCronExpression: '0 0 6 * * ?', timezoneId: 'UTC', pauseStatus: 'UNPAUSED' };
+
+  it('lists the checks a group turns on', () => {
+    const { configs, jobs } = validateImport({
+      ...location,
+      file: { configs: [config()], jobs: [job({ rowChecks: { basic: on, detailed: { ...on, rangeFrom: '-30d' } } })] },
+    });
+    expect(importSummary(configs, jobs)[0].rowChecks).toEqual(['basic', 'detailed']);
+    expect(jobs[0].rowChecks.detailed.rangeFrom).toBe('-30d');
+  });
+
+  it('imports job settings exported before row checks existed, with both checks off', () => {
+    const { jobs } = validateImport({ ...location, file: { configs: [config()], jobs: [job()] } });
+    expect(jobs[0].rowChecks.basic.enabled).toBe(false);
+    expect(jobs[0].rowChecks.detailed.enabled).toBe(false);
+  });
+
+  it('rejects a range that the check could not parse', () => {
+    expect(() =>
+      validateImport({
+        ...location,
+        file: { configs: [config()], jobs: [job({ rowChecks: { detailed: { ...on, rangeFrom: 'last month' } } })] },
+      })
+    ).toThrow(/days back/);
   });
 });
 

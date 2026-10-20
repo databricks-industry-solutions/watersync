@@ -126,7 +126,11 @@ def import_config(
         try:
             saved = app.request("POST", "/api/jobs", body={**job, "catalog": catalog, "schema": schema})
             pipeline = f", CDC pipeline {saved['pipelineId']}" if saved.get("pipelineId") else ""
-            log(f"Job for {group}: {saved['action']} job {saved['jobId']}{pipeline}")
+            checks = "".join(
+                f", {mode} row check job {check.get('jobId')} {check.get('action')}"
+                for mode, check in (saved.get("rowCheckJobs") or {}).items()
+            )
+            log(f"Job for {group}: {saved['action']} job {saved['jobId']}{pipeline}{checks}")
         except RequestFailed as error:
             succeeded = False
             log(f"Job for {group} failed: {error}")

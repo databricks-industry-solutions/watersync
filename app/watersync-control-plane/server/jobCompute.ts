@@ -1,5 +1,6 @@
 import type { jobs } from '@databricks/sdk-experimental';
 import type { JobCompute } from './schemas.js';
+import { workspace } from './sql.js';
 
 // Shared by the ingestion jobs and the row check job, so both offer and read back the same compute and identity.
 export const environmentKey = 'watersync_environment';
@@ -73,3 +74,26 @@ export const runAsTarget = (identity: string | undefined, creator: string | unde
     : servicePrincipalId.test(identity)
       ? ({ mode: 'SERVICE_PRINCIPAL', principal: identity } as const)
       : ({ mode: 'USER', principal: identity } as const);
+
+/**
+ * A job WaterSync generated for a location, found by its name: only jobs whose `configuration_fqn` parameter
+ * points at this location's config table count, so a job of the same name for another location is ignored.
+ */
+export async function findLocationJob(name: string, configurationFqn: string) {
+  for await (const listed of workspace.jobs.list({ name, limit: 25, expand_tasks: false })) {
+    if (listed.settings?.name !== name || !listed.job_id) continue;
+    const job = await workspace.jobs.get({ job_id: listed.job_id });
+    const parameters = new Map((job.settings?.parameters ?? []).map((item) => [item.name, item.default]));
+    if (parameters.get('configuration_fqn') === configurationFqn) return job;
+  }
+  return undefined;
+}
+
+/** Creates the job, or resets the existing one in place, and says which. */
+export async function upsertJob(existingJobId: number | undefined, settings: jobs.JobSettings) {
+  if (existingJobId) {
+    await workspace.jobs.reset({ job_id: existingJobId, new_settings: settings });
+    return { jobId: existingJobId, action: 'updated' as const };
+  }
+  return { jobId: (await workspace.jobs.create(settings as jobs.CreateJob)).job_id, action: 'created' as const };
+}

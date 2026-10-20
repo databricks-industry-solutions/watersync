@@ -121,14 +121,24 @@ export function validateImport({ catalog, schema, file }: ImportPayload) {
   return { configs: configs.map(({ data }) => data), jobs: jobs.map(({ data }) => data) };
 }
 
-/** Per group: how many source tables the file brings and whether it carries job settings. */
+/**
+ * Per group: how many source tables the file brings, whether it carries job settings, and which scheduled row
+ * checks (basic, detailed) those settings turn on.
+ */
 export function importSummary(configs: ConfigPayload[], jobs: JobPayload[]) {
-  const groups = new Map<string, { ingestionGroup: string; configCount: number; hasJobSettings: boolean }>();
+  type GroupSummary = { ingestionGroup: string; configCount: number; hasJobSettings: boolean; rowChecks: string[] };
+  const groups = new Map<string, GroupSummary>();
   const group = (ingestionGroup: string) =>
     groups.get(ingestionGroup) ??
-    groups.set(ingestionGroup, { ingestionGroup, configCount: 0, hasJobSettings: false }).get(ingestionGroup)!;
+    groups
+      .set(ingestionGroup, { ingestionGroup, configCount: 0, hasJobSettings: false, rowChecks: [] })
+      .get(ingestionGroup)!;
   for (const config of configs) group(config.ingestionGroup).configCount += 1;
-  for (const job of jobs) group(job.ingestionGroup).hasJobSettings = true;
+  for (const job of jobs) {
+    const summary = group(job.ingestionGroup);
+    summary.hasJobSettings = true;
+    summary.rowChecks = (['basic', 'detailed'] as const).filter((mode) => job.rowChecks[mode].enabled);
+  }
   return [...groups.values()].sort((a, b) => a.ingestionGroup.localeCompare(b.ingestionGroup));
 }
 

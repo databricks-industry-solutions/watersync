@@ -198,9 +198,19 @@ function ImportDialog({
                               Failed
                             </Badge>
                           ) : job ? (
-                            <Badge>{`Job ${job.jobId} ${job.action}`}</Badge>
+                            <div className="flex flex-wrap gap-1">
+                              <Badge>{`Job ${job.jobId} ${job.action}`}</Badge>
+                              {Object.entries(job.rowCheckJobs ?? {}).map(([mode, check]) => (
+                                <Badge key={mode} variant="outline">{`${mode} row check ${check.action}`}</Badge>
+                              ))}
+                            </div>
                           ) : group.hasJobSettings ? (
-                            <Badge variant="secondary">Settings included</Badge>
+                            <div className="flex flex-wrap gap-1">
+                              <Badge variant="secondary">Settings included</Badge>
+                              {group.rowChecks.map((mode) => (
+                                <Badge key={mode} variant="outline">{`Scheduled ${mode} row check`}</Badge>
+                              ))}
+                            </div>
                           ) : (
                             <span className="text-muted-foreground">{'—'}</span>
                           )}
@@ -230,7 +240,7 @@ function ImportDialog({
               />
               <Toggle
                 name="deployJobs"
-                label="Create or update the Databricks job (and CDC pipeline) of each group with job settings"
+                label="Create or update the Databricks job (with its CDC pipeline and scheduled row checks) of each group with job settings"
                 checked={deploying}
                 disabled={!preview.jobCount}
                 onCheckedChange={setDeployJobs}

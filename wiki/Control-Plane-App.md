@@ -59,13 +59,14 @@ The **Jobs** dialog builds one job per ingestion group, named `[<group>] Ingesti
 | **Job Compute** | **Serverless** (default) with a performance mode (`STANDARD` or `PERFORMANCE_OPTIMIZED`), or a **shared autoscaling job cluster** (Databricks Runtime, driver and worker node types, min/max workers) used by the planner and every worker |
 | **SDP Compute** | Shown when the group has a CDC pipeline: **Serverless** (default), sharing the job's performance mode, or a **classic autoscaling cluster** (node types, min/max workers, Photon) |
 | **Schedule** | Quartz cron expression, time zone, active or paused; or manual runs only |
+| **Row checks** | A scheduled **basic** check (row counts; on by default, daily at 06:00 UTC) and a scheduled **detailed** check (off by default; weekly on Sunday), each optional, with its own cron, time zone and active or paused state. The detailed check can be limited to recent rows (for example `-30d`). See [Scheduled checks per group](Row-Checks#scheduled-checks-per-group) |
 | **Run as** | The job runs as its owner (the app service principal, default), a user, or a service principal. The SDP pipeline follows the job (default) or uses its own identity |
 
 - Jobs install the package from Git (`watersync@git+<git_url>.git@<git_branch>`) and run the notebooks from the same repository. The branch must not contain whitespace, quotes or backslashes, because it ends up in the pip requirement.
 - Node type fields are prefilled with the smallest general-purpose node type with at least 4 cores (`GET /api/node-types`). Other node types are offered as suggestions.
 - If a required field is missing on a tab you are not viewing, the dialog switches to that tab and names the field.
 - The CDC pipeline is named `[<group>] CDC SCD2 Pipeline` and is created or updated with the job. Serverless pipelines install the package through the pipeline environment. Classic pipelines run on the **Advanced** edition (Auto CDC needs at least Pro) and use a per-group notebook in `/Shared/watersync-generated-pipelines` that installs the package with `%pip`.
-- Databricks keeps one serverless performance mode per job, so Job Compute and SDP Compute share it. It is sent whenever the job compute or the SDP pipeline is serverless.
+- Databricks keeps one serverless performance mode per job, and it covers the SDP pipeline task too, so the job and its pipeline always run with the same mode. The dialog lets you edit it in one place: on **Job Compute** when the job is serverless (**SDP Compute** then shows it read-only, with a button to go there), otherwise on **SDP Compute** when only the pipeline is serverless. It is sent whenever the job compute or the SDP pipeline is serverless.
 - Running as a user requires the app service principal to be a workspace admin. Running as another service principal requires it to have the Service Principal User role on that principal. The SDP run-as setting is ignored when you reuse an existing pipeline by ID.
 
 See [App Development](App-Development) for local development, the API routes and migrations.

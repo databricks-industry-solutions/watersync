@@ -437,7 +437,7 @@ export function RowChecksPage() {
           )}
         </Empty>
       ) : (
-        <Card className="overflow-hidden">
+        <Card className="gap-0 overflow-hidden py-0">
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
@@ -622,7 +622,7 @@ function GroupsTable({
     );
   }
   return (
-    <Card className="overflow-hidden">
+    <Card className="gap-0 overflow-hidden py-0">
       <Table>
         <TableHeader>
           <TableRow className="hover:bg-transparent">
