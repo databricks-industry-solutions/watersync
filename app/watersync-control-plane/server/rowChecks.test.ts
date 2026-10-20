@@ -60,9 +60,8 @@ vi.mock('./sql.js', () => ({
   tableName: vi.fn(),
 }));
 
-const { deleteRowCheckJob, listRowCheckJobs, readRowCheckJobSettings, runRowCheck, saveRowCheckJob } = await import(
-  './rowChecks.js'
-);
+const { deleteRowCheckJob, listRowCheckJobs, readRowCheckJobSettings, runRowCheck, runRowCheckJob, saveRowCheckJob } =
+  await import('./rowChecks.js');
 
 const payload = (overrides: Record<string, unknown> = {}) =>
   rowCheckJobPayloadSchema.parse({
@@ -278,6 +277,18 @@ describe('row check runs', () => {
     await saveRowCheckJob(payload({ ingestionGroup: 'sales', checkMode: 'detailed' }));
     await run({ checkMode: 'detailed', ingestionGroup: 'sales', sourceTableName: 'public.orders' });
     expect(workspace.jobs.runNow).toHaveBeenCalledWith(expect.objectContaining({ job_id: 10 }));
+  });
+
+  it('runs one job now with its own settings', async () => {
+    await saveRowCheckJob(payload());
+    await saveRowCheckJob(payload({ ingestionGroup: 'sales', checkMode: 'detailed', rangeFrom: '-5d' }));
+    expect(await runRowCheckJob('dev', 'watersync', 'sales', 'detailed')).toEqual({
+      runId: 101,
+      runUrl: 'https://example.cloud.databricks.com/jobs/10/runs/101',
+    });
+    // No parameters: the run takes the job's defaults, as a scheduled run does.
+    expect(workspace.jobs.runNow).toHaveBeenCalledWith({ job_id: 10 });
+    await expect(runRowCheckJob('dev', 'watersync', 'hr', 'basic')).rejects.toThrow('There is no basic row check job');
   });
 
   it('refuses to run before a job exists', async () => {

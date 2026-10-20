@@ -366,7 +366,7 @@ export function RowChecksPage() {
         loading={jobLoading}
         location={location}
         onEdit={setEditing}
-        onDeleted={() => void loadJob()}
+        onChanged={() => void loadJob()}
       />
       <FilterBar
         location={location}
@@ -924,16 +924,33 @@ function RowCheckJobsCard({
   loading,
   location,
   onEdit,
-  onDeleted,
+  onChanged,
 }: {
   jobs: RowCheckJob[];
   loading: boolean;
   location: Location;
   onEdit: (job: RowCheckJob | 'new') => void;
-  onDeleted: () => void;
+  /** After a job was run or deleted, to reload the jobs (and poll while the run is going). */
+  onChanged: () => void;
 }) {
   const [deleting, setDeleting] = useState<number | null>(null);
+  const [running, setRunning] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const run = async (job: RowCheckJob) => {
+    setRunning(job.jobId);
+    setError(null);
+    try {
+      await api('/api/row-checks/job/run', {
+        method: 'POST',
+        body: JSON.stringify({ ...location, ingestionGroup: job.ingestionGroup, checkMode: job.checkMode }),
+      });
+      onChanged();
+    } catch (x) {
+      setError(reportError('row_checks.job_run', x, { ...location, jobId: job.jobId }));
+    } finally {
+      setRunning(null);
+    }
+  };
   const remove = async (job: RowCheckJob) => {
     if (!window.confirm(`Delete the job "${job.name}" and its run history? Check results stay on this page.`)) return;
     setDeleting(job.jobId);
@@ -941,7 +958,7 @@ function RowCheckJobsCard({
     try {
       const query = new URLSearchParams({ ...location, ingestionGroup: job.ingestionGroup, checkMode: job.checkMode });
       await api(`/api/row-checks/job?${query.toString()}`, { method: 'DELETE' });
-      onDeleted();
+      onChanged();
     } catch (x) {
       setError(reportError('row_checks.job_delete', x, { ...location, jobId: job.jobId }));
     } finally {
@@ -993,6 +1010,7 @@ function RowCheckJobsCard({
           <TableBody>
             {jobs.map((job) => {
               const latest = job.runs[0];
+              const active = job.runs.some(isActive);
               return (
                 <TableRow key={job.jobId}>
                   <TableCell className="max-w-80">
@@ -1045,6 +1063,24 @@ function RowCheckJobsCard({
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-1">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => void run(job)}
+                        disabled={running !== null || active}
+                        title={
+                          active
+                            ? 'The job is already running'
+                            : `Run the ${job.checkMode} check of ${job.ingestionGroup || 'every group'} now, with the job's settings`
+                        }
+                      >
+                        {running === job.jobId || active ? (
+                          <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Play className="mr-1.5 h-3.5 w-3.5" />
+                        )}
+                        {running === job.jobId ? 'Starting…' : active ? 'Running' : 'Run now'}
+                      </Button>
                       <Button size="sm" variant="outline" onClick={() => onEdit(job)}>
                         <Settings2 className="mr-1.5 h-3.5 w-3.5" />
                         Edit

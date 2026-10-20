@@ -1,7 +1,7 @@
 import type { Application } from 'express';
 import { z } from 'zod';
 import { locationSchema, rowCheckJobPayloadSchema, rowCheckRunPayloadSchema } from '../schemas.js';
-import { deleteRowCheckJob, listRowCheckJobs, runRowCheck, saveRowCheckJob } from '../rowChecks.js';
+import { deleteRowCheckJob, listRowCheckJobs, runRowCheck, runRowCheckJob, saveRowCheckJob } from '../rowChecks.js';
 import { apiRoute } from '../logging.js';
 
 const rowCheckJobScopeSchema = locationSchema.extend({
@@ -9,7 +9,7 @@ const rowCheckJobScopeSchema = locationSchema.extend({
   checkMode: z.enum(['basic', 'detailed']),
 });
 
-/** Registers the row check routes: list, save and delete the row check jobs, and start a check. */
+/** Registers the row check routes: list, save, run and delete the row check jobs, and start a check. */
 export function registerRowCheckRoutes(app: Application) {
   app.get(
     '/api/row-checks/jobs',
@@ -31,6 +31,15 @@ export function registerRowCheckRoutes(app: Application) {
     apiRoute('row_checks_job_delete', async (req, res) => {
       const { catalog, schema, ingestionGroup, checkMode } = rowCheckJobScopeSchema.parse(req.query);
       res.json(await deleteRowCheckJob(catalog, schema, ingestionGroup, checkMode));
+    })
+  );
+
+  // Runs one job with its own settings; /api/row-checks/run instead starts a check of given tables on any job.
+  app.post(
+    '/api/row-checks/job/run',
+    apiRoute('row_checks_job_run', async (req, res) => {
+      const { catalog, schema, ingestionGroup, checkMode } = rowCheckJobScopeSchema.parse(req.body);
+      res.json(await runRowCheckJob(catalog, schema, ingestionGroup, checkMode));
     })
   );
 

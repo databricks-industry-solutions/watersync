@@ -130,6 +130,20 @@ export async function saveRowCheckJob(body: RowCheckJobPayload) {
   return { jobId, action, name };
 }
 
+/** Runs the row check job of a scope and mode now, with its own settings, as its schedule would. */
+export async function runRowCheckJob(catalog: string, schema: string, ingestionGroup: string, mode: RowCheckMode) {
+  const existing = await findRowCheckJob(catalog, schema, ingestionGroup, mode);
+  if (!existing?.job_id) throw new Error(`There is no ${mode} row check job for ${ingestionGroup || 'this location'}`);
+  const run = await workspace.jobs.runNow({ job_id: existing.job_id });
+  logger.info('row_checks.job_run_started', {
+    jobId: existing.job_id,
+    runId: run.run_id,
+    ingestionGroup,
+    checkMode: mode,
+  });
+  return { runId: run.run_id, runUrl: `${workspaceBaseUrl()}/jobs/${existing.job_id}/runs/${run.run_id}` };
+}
+
 /** Deletes the row check job of a scope and mode; its run history goes with it. */
 export async function deleteRowCheckJob(catalog: string, schema: string, ingestionGroup: string, mode: RowCheckMode) {
   const existing = await findRowCheckJob(catalog, schema, ingestionGroup, mode);

@@ -95,7 +95,7 @@ A [full refresh](CDC-Pipeline-and-Full-Refresh#full-refresh) of the table resync
 
 The page of the [Control Plane App](Control-Plane-App) shows, from top to bottom:
 
-- **Row check jobs.** Every row check job of the location and of its groups: what it checks (basic or detailed, every group or one), its schedule, its compute and its latest run, with **Edit** and **Delete**. **New row check job** creates one (see [Row check jobs](#row-check-jobs)).
+- **Row check jobs.** Every row check job of the location and of its groups: what it checks (basic or detailed, every group or one), its schedule, its compute and its latest run, with **Run now**, **Edit** and **Delete**. **New row check job** creates one (see [Row check jobs](#row-check-jobs)).
 - **Filter bar.** A group, up to 8 picked tables (one per chart color) and a table-name search, applied to every section below. The filtering runs on the SQL warehouse, so the page works the same with thousands of tables.
 - **Summary.** One line with the latest basic check of the filtered tables: how many match, differ or failed, the last check and how many row check jobs are scheduled.
 - **Status of every table.** One square per enabled table, grouped by ingestion group and coloured by its worst latest result, basic or detailed: error, mismatch, match or not checked. Click a square to show only that table, with any status, and jump to its row; click it again to show every table. The map follows the group and name filters but not picked tables, so every table stays visible while one is picked. Above 300 tables the squares shrink and the map scrolls; it shows at most 5,000 tables.
@@ -156,7 +156,7 @@ A job runs `notebooks/Task - Row Check` from your Git repository and installs th
 | **Schedule** | Quartz cron expression, time zone, active or paused; or manual runs only |
 | **Run as** | The job's owner (the app service principal, default), a user, or a service principal |
 
-**Edit** opens the dialog with the job's current settings, read back from the Databricks API. Creating a job for a scope and check that already has one updates that job. **Delete** deletes the job and its run history; the check results stay. Detailed checks aggregate the whole target table in Spark, so size a job cluster like the ingestion one.
+**Run now** runs the job once with its own settings, as its schedule would; it is disabled while the job runs. **Edit** opens the dialog with the job's current settings, read back from the Databricks API. Creating a job for a scope and check that already has one updates that job. **Delete** deletes the job and its run history; the check results stay. Detailed checks aggregate the whole target table in Spark, so size a job cluster like the ingestion one.
 
 | Job parameter | Default | Meaning |
 | --- | --- | --- |

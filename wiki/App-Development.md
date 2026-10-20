@@ -171,6 +171,7 @@ npx vitest run
 | `GET /api/export`, `POST /api/import`                                                   | Export or import a location's configuration                   |
 | `GET /api/latest-release`                                                               | Latest published GitHub release, for the new release notice   |
 | `GET /api/row-checks/jobs`, `POST /api/row-checks/job`, `DELETE /api/row-checks/job`    | List the row check jobs of the location and its groups (each with its last 10 runs), save one, or delete one |
+| `POST /api/row-checks/job/run`                                                         | Run one row check job now with its own settings |
 | `POST /api/row-checks/run`                                                              | Start a basic or detailed row check, optionally for one table |
 
 ## Query caching
