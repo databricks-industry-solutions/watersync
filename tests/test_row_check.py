@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 import types
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 delta_tables = types.ModuleType("delta.tables")
 delta_tables.DeltaTable = object
@@ -142,12 +142,64 @@ class RowCheckTest(unittest.TestCase):
         runner = make_runner()
         runner.range_from = "100"
         self.assertEqual(runner.resolve_range(make_config(key_columns="order_id"), fields).column, "order_id")
-        # A composite key is not a chunk column, so the timestamp watermark is used.
+        # A time range goes on the timestamp watermark, even when an integer key is the chunk column.
         runner.range_from = "-7d"
         self.assertEqual(runner.resolve_range(make_config(key_columns="a,b"), fields).column, "updated_at")
-        # A relative day count cannot bound an integer column.
+        self.assertEqual(runner.resolve_range(make_config(key_columns="order_id"), fields).column, "updated_at")
+        # Without a timestamp column there is nothing to filter a time range by: every row is checked.
+        self.assertIsNone(runner.resolve_range(make_config(key_columns="order_id", watermark_column=""), fields))
+        # A number still bounds the chunk column, and cannot bound a timestamp.
+        runner.range_from = "100"
         with self.assertRaises(ValueError):
-            runner.resolve_range(make_config(key_columns="order_id"), fields)
+            runner.resolve_range(make_config(key_columns="a,b"), fields)
+
+    def test_time_range_on_a_csa_table_checks_the_keys_changed_in_it(self) -> None:
+        from datetime import datetime
+
+        runner = make_runner("detailed")
+        runner.range_from, runner.range_now = "-7d", datetime(2026, 10, 20, 9, 30)
+        queries: list[str] = []
+        changed_keys, oldest = MagicMock(name="changed_keys"), datetime(2026, 10, 15)
+
+        def reader(query: str):
+            queries.append(query)
+            loaded = MagicMock()
+            loaded.toDF.return_value = changed_keys
+            loaded.first.return_value = [oldest]
+            return MagicMock(load=MagicMock(return_value=loaded))
+
+        worker = MagicMock(build_jdbc_reader=MagicMock(side_effect=reader))
+        target = MagicMock(columns=["PAT_ENC_CSN_ID", "CONTACT_DATE"])
+        config = make_config(
+            source_table_name="dbo.PAT_ENC", key_columns="pat_enc_csn_id", watermark_column="", epic_csa_enabled=True
+        )
+        where, selected, checked = runner.select_rows(config, worker, "sqlserver", {}, target)
+        self.assertEqual(
+            where,
+            "EXISTS (SELECT 1 FROM epic_util.csa_pat_enc csa WHERE csa.pat_enc_csn_id = dbo.PAT_ENC.pat_enc_csn_id "
+            "AND csa._UPDATE_DT >= CAST('2026-10-13 00:00:00' AS DATETIME2))",
+        )
+        self.assertIn("SELECT DISTINCT csa.pat_enc_csn_id AS pat_enc_csn_id FROM epic_util.csa_pat_enc", queries[0])
+        # The target keeps the rows of the changed keys, matched by the target's spelling of the key.
+        target.join.assert_called_once_with(changed_keys, on=["PAT_ENC_CSN_ID"], how="left_semi")
+        self.assertIs(selected, target.join.return_value)
+        # The change table only reaches back 5 of the 7 days asked for.
+        self.assertIn("CSA keeps changes only since 2026-10-15 00:00:00", checked)
+        self.assertIn("more often than the CSA retention period", checked)
+
+    def test_number_range_on_a_csa_table_stays_on_the_chunk_column(self) -> None:
+        from pyspark.sql.types import IntegerType, StructField
+
+        runner = make_runner("detailed")
+        runner.range_from = "100"
+        config = make_config(key_columns="order_id", watermark_column="", epic_csa_enabled=True)
+        fields = {"order_id": StructField("order_id", IntegerType())}
+        target = MagicMock(columns=["order_id"])
+        with patch.object(runner, "range_filter", return_value="condition"):
+            where, selected, checked = runner.select_rows(config, None, "postgres", fields, target)
+        target.filter.assert_called_once_with("condition")
+        self.assertEqual(where, '"order_id" >= 100')
+        self.assertEqual(checked, "order_id >= 100")
 
     def test_explicit_range_column_must_exist(self) -> None:
         runner = make_runner()

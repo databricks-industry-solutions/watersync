@@ -7,12 +7,14 @@ from decimal import Decimal
 from watersync.row_check_sql import (
     DATE_OFFSET_DAYS,
     ChunkPlan,
+    CsaChanges,
     RowRange,
     parse_range_bound,
     boolean_code_sql,
     check_dialect,
     chunk_aggregate_query,
     date_code_sql,
+    is_time_bound,
     month_chunk_sql,
     quote_identifier,
     string_hash_sql,
@@ -91,13 +93,43 @@ class RowCheckSqlTest(unittest.TestCase):
         )
         self.assertIn("SUM(CAST([amount] AS DECIMAL(38, 2))) AS s0", query)
         self.assertIn("SUM(CAST(COALESCE(x, 0) AS DECIMAL(38, 0))) AS h0", query)
-        self.assertIn("AS ws_chunk_id, src.* FROM sales.orders src", query)
+        self.assertIn("AS ws_chunk_id, sales.orders.* FROM sales.orders WHERE", query)
         self.assertIn("GROUP BY ws_chunk_id", query)
 
 
     def test_aggregate_query_filters_the_checked_range(self) -> None:
         query = chunk_aggregate_query("sales.orders", "0", [], [], where="[id] >= 100")
-        self.assertIn("FROM sales.orders src WHERE [id] >= 100", query)
+        self.assertIn("FROM sales.orders WHERE [id] >= 100", query)
+
+    def test_csa_changes_select_the_keys_changed_in_the_range(self) -> None:
+        changes = CsaChanges.parse(
+            "dbo.ORDERS", "epic_util.csa_orders", ["ORDER_ID", "LINE"], "2026-09-01", "2026-10-01"
+        )
+        self.assertEqual(
+            changes.source_sql("postgres"),
+            "EXISTS (SELECT 1 FROM epic_util.csa_orders csa WHERE csa.ORDER_ID = dbo.ORDERS.ORDER_ID "
+            "AND csa.LINE = dbo.ORDERS.LINE AND csa._UPDATE_DT >= CAST('2026-09-01 00:00:00' AS TIMESTAMP) "
+            "AND csa._UPDATE_DT < CAST('2026-10-01 00:00:00' AS TIMESTAMP))",
+        )
+        self.assertEqual(
+            changes.keys_query("postgres"),
+            "(SELECT DISTINCT csa.ORDER_ID AS ORDER_ID, csa.LINE AS LINE FROM epic_util.csa_orders csa "
+            "WHERE csa._UPDATE_DT >= CAST('2026-09-01 00:00:00' AS TIMESTAMP) "
+            "AND csa._UPDATE_DT < CAST('2026-10-01 00:00:00' AS TIMESTAMP)) csa_changes",
+        )
+        self.assertEqual(
+            changes.describe(datetime(2026, 8, 1)),
+            "keys changed since 2026-09-01 00:00:00 and before 2026-10-01 00:00:00 in epic_util.csa_orders",
+        )
+        self.assertIn("the CSA change table is empty", changes.describe(None))
+
+    def test_csa_changes_need_key_columns_and_a_time(self) -> None:
+        with self.assertRaises(ValueError):
+            CsaChanges.parse("dbo.ORDERS", "epic_util.csa_orders", [], "-7d", "")
+        self.assertTrue(is_time_bound("-30d"))
+        self.assertTrue(is_time_bound("2026-09-01"))
+        self.assertFalse(is_time_bound("100"))
+        self.assertFalse(is_time_bound(""))
 
     def test_range_bounds_are_typed(self) -> None:
         self.assertEqual(parse_range_bound(" 100 ", "number"), Decimal("100"))

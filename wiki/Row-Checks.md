@@ -61,10 +61,22 @@ A table is `MISMATCH` when the counts differ, tier 3 found a row difference, or 
 A check can be limited to a range of rows, so a large table can be checked one slice at a time, for example its last 30 days. In the app, turn on **Check a range of rows only** in the **Detailed check** dialog. From a job run or the CLI, set `range_from` and/or `range_to`.
 
 - The range is `range_from <= column < range_to`; leave a bound empty for no limit on that side.
-- The column is `range_column`, or by default the table's chunk column (see tier 2). A table without a chunk column needs `range_column`, otherwise it is reported as `ERROR`.
+- The column is `range_column` when set. Otherwise it depends on the bounds:
+  - **A number** bounds the table's chunk column (see tier 2). A table whose chunk column is not an integer, or that has none, needs `range_column`, otherwise it is reported as `ERROR`.
+  - **A date, a timestamp or days back** (`-30d`) bounds the timestamp (or date) watermark column, else the chunk column when that is a timestamp. A table with neither, for example a full load without a timestamp, is checked in full, and `checked_range` says so. **EPIC CSA** tables are handled differently, see [Ranges on EPIC CSA tables](#ranges-on-epic-csa-tables).
 - Bounds are a number, a date (`2026-09-01`), a timestamp (`2026-09-01 12:00:00`) or a number of days back (`-30d`, from midnight of the job's clock, which is UTC on serverless and on job clusters unless they set another time zone). They are parsed for the column's type and never inserted into SQL as text.
 - The range applies to every tier, on both sides: the counts, the chunk aggregates and the rows tier 3 reads. With integer chunks, the 100 ranges are spread over the checked rows only, so a narrow range gets narrow chunks.
 - Each result keeps the range in `checked_range`, and the app shows it under the result, so a partial check is never mistaken for the whole table.
+
+#### Ranges on EPIC CSA tables
+
+EPIC CSA tables usually have no timestamp column: changes are tracked in the CSA change table, `epic_util.csa_<table>`, which the ingestion reads too. A date, timestamp or days-back range on a CSA table (without `range_column`) checks the rows whose key the change table lists as changed in the range (`range_from <= _UPDATE_DT < range_to`):
+
+- On the source, the rows with such a key; on the target, the active rows with the same keys. A deleted key is still listed, so a row that is still active in the target shows up as extra.
+- The chunks are planned as usual (by the integer key, for example), over these rows only.
+- **The change table keeps changes only for its retention period.** A range start older than the oldest change in the table checks only what is left, and `checked_range` then says how far back the change table reached, for example `keys changed since 2026-09-20 00:00:00 in epic_util.csa_pat_enc; CSA keeps changes only since 2026-10-15 00:00:00, so earlier changes were not checked`.
+- **So schedule a ranged detailed check more often than the CSA retention period**, with a range start within it. With a retention of 5 days and a weekly check, the changes of 2 days each week are never checked; every 4 days with `-5d` leaves no gap. Changes that were never ingested and have left the change table cannot be found this way; a detailed check without a range start (every row) finds them.
+- A number range on a CSA table still bounds its chunk column.
 
 A row whose range column changed in the source but not yet in the target (for example a `modified_at` that moved into the range) is on one side of the filter only, so it shows up as missing or extra.
 

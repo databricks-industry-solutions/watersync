@@ -797,7 +797,9 @@ function DetailedCheckDialog({
                 />
                 <p className="text-xs text-muted-foreground">
                   Leave empty to use the chunk column: the integer partition column or key, else the timestamp watermark
-                  column.
+                  column. A date, timestamp or days-back range goes on the timestamp watermark column; on an EPIC CSA
+                  table it checks the rows whose key changed in the range, as long as the CSA change table still keeps
+                  those changes.
                 </p>
               </div>
               <div className="space-y-2">
@@ -1115,6 +1117,9 @@ function RunStrip({ runs, activeRuns }: { runs: RowCheckRun[]; activeRuns: RowCh
   );
 }
 
+// A date, a timestamp or days back (-30d), as opposed to a number: see is_time_bound in row_check_sql.py.
+const isTimeBound = (value: string) => value.trim() !== '' && !/^-?\d+(\.\d+)?$/.test(value.trim());
+
 // A new job's schedule: the basic check daily, the detailed check weekly, since it reads much more.
 const defaultSchedules: Record<RowCheckMode, JobSchedule> = {
   basic: { quartz_cron_expression: '0 0 6 * * ?', timezone_id: 'UTC' },
@@ -1192,6 +1197,7 @@ function RowCheckJobForm({
   // The scope and mode name the job, so they are fixed once it exists.
   const [ingestionGroup, setIngestionGroup] = useState(job?.ingestionGroup ?? '');
   const [checkMode, setCheckMode] = useState<RowCheckMode>(job?.checkMode ?? 'basic');
+  const [rangeFrom, setRangeFrom] = useState(job?.rangeFrom ?? '');
   // A new job is scheduled on serverless as the app; an existing one keeps what the Databricks API reports.
   const [scheduleEnabled, setScheduleEnabled] = useState(job ? job.schedule.enabled : true);
   const [scheduleActive, setScheduleActive] = useState(job?.schedule.pauseStatus !== 'PAUSED');
@@ -1237,7 +1243,7 @@ function RowCheckJobForm({
           ...location,
           ingestionGroup,
           checkMode,
-          rangeFrom: checkMode === 'detailed' ? formString(form, 'rangeFrom', '') : '',
+          rangeFrom: checkMode === 'detailed' ? rangeFrom.trim() : '',
           gitUrl: form.get('gitUrl'),
           gitBranch: form.get('gitBranch'),
           maxParallelTables: Number(form.get('maxParallelTables')),
@@ -1327,15 +1333,30 @@ function RowCheckJobForm({
                   id="row-check-range-from"
                   name="rangeFrom"
                   placeholder="-30d"
-                  defaultValue={job?.rangeFrom ?? ''}
+                  value={rangeFrom}
+                  onChange={(event) => setRangeFrom(event.target.value)}
                   pattern="^$|^-?\d+(\.\d+)?$|^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}:\d{2})?$|^-\d{1,5}d$"
                   title="A number, a date (2026-09-01), a timestamp (2026-09-01 12:00:00) or days back (-30d)"
                 />
                 <p className="text-xs text-muted-foreground">
-                  Checks only rows from this value of each table&apos;s chunk column, for example the last 30 days
-                  (-30d). Empty checks every row.
+                  Empty checks every row. A date, a timestamp or days back (-30d) checks recent rows: for EPIC CSA
+                  tables, the rows whose key the CSA change table lists as changed since then; for other tables, the
+                  rows from then by the timestamp watermark column, or every row when the table has none. A number
+                  checks rows from that value of each table&apos;s integer chunk column.
                 </p>
               </div>
+            )}
+            {checkMode === 'detailed' && isTimeBound(rangeFrom) && (
+              <Alert className="md:col-span-2">
+                <TriangleAlert className="h-4 w-4" />
+                <AlertTitle>Schedule this job more often than the CSA retention period</AlertTitle>
+                <AlertDescription>
+                  The CSA change tables keep changes only for their retention period, so EPIC CSA tables are checked
+                  only for changes still listed there. If the retention is 5 days and this job runs weekly, the changes
+                  of 2 days each week are never checked. Run it more often than the retention (for example every 4 days
+                  with -5d); results say when the change table no longer reached the start.
+                </AlertDescription>
+              </Alert>
             )}
             {existing && (
               <Alert className="md:col-span-2">
