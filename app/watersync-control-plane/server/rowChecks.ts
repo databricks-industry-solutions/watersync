@@ -1,15 +1,14 @@
 import type { jobs } from '@databricks/sdk-experimental';
-import { groupRowChecksSchema, toRunAs } from './schemas.js';
+import { toRunAs } from './schemas.js';
 import type {
-  GroupRowChecks,
   JobCompute,
-  JobPayload,
   RowCheckJobPayload,
+  RowCheckJobSettings,
   RowCheckRunPayload,
   RunAsTarget,
   Schedule,
 } from './schemas.js';
-import { workspace, workspaceBaseUrl } from './sql.js';
+import { allResponseRows, execute, tableName, workspace, workspaceBaseUrl } from './sql.js';
 import { watersyncDependency } from './pipelines.js';
 import { logger } from './logging.js';
 import { findLocationJob, jobCompute, readJobCompute, runAsIdentity, runAsTarget, upsertJob } from './jobCompute.js';
@@ -17,17 +16,24 @@ import { findLocationJob, jobCompute, readJobCompute, runAsIdentity, runAsTarget
 export const rowCheckNotebookPath = 'notebooks/Task - Row Check';
 const taskKey = 'row_check';
 
-// One job per metadata location: it checks every enabled table of every group there.
-export const rowCheckJobName = (catalog: string, schema: string) => `[${catalog}.${schema}] Row Checks`;
-const rowCheckFqn = (catalog: string, schema: string) => `${catalog}.${schema}._watersync_row_checks`;
+export type RowCheckMode = 'basic' | 'detailed';
+export const rowCheckModes: RowCheckMode[] = ['basic', 'detailed'];
 
-async function findRowCheckJob(catalog: string, schema: string) {
-  const name = rowCheckJobName(catalog, schema);
-  for await (const job of workspace.jobs.list({ name, limit: 25, expand_tasks: false })) {
-    if (job.settings?.name === name && job.job_id) return job.job_id;
-  }
-  return undefined;
-}
+/**
+ * Each row check job runs one check mode over every enabled table of the location (ingestionGroup '') or of one
+ * group, so there is at most one job per scope and mode. The location's basic job keeps its original name.
+ */
+export const rowCheckJobName = (catalog: string, schema: string, ingestionGroup: string, mode: RowCheckMode) =>
+  ingestionGroup
+    ? `[${ingestionGroup}] Row Check (${mode})`
+    : mode === 'basic'
+      ? `[${catalog}.${schema}] Row Checks`
+      : `[${catalog}.${schema}] Row Checks (detailed)`;
+const rowCheckFqn = (catalog: string, schema: string) => `${catalog}.${schema}._watersync_row_checks`;
+const configurationFqnOf = (catalog: string, schema: string) => `${catalog}.${schema}.jdbc_ingestion_config`;
+
+const findRowCheckJob = (catalog: string, schema: string, ingestionGroup: string, mode: RowCheckMode) =>
+  findLocationJob(rowCheckJobName(catalog, schema, ingestionGroup, mode), configurationFqnOf(catalog, schema));
 
 const parameterValue = (run: jobs.BaseRun, name: string) => {
   const item = run.job_parameters?.find((parameter) => parameter.name === name);
@@ -51,7 +57,7 @@ type RowCheckJobOptions = {
   rangeFrom: string;
 };
 
-/** The settings of a row check job: the location's job and each group's scheduled jobs share this shape. */
+/** The settings of a row check job, whatever its scope and mode. */
 function rowCheckJobSettings(options: RowCheckJobOptions): jobs.JobSettings {
   const compute = jobCompute(options.compute, watersyncDependency(options.gitUrl, options.gitBranch));
   const runAs = toRunAs(options.runAs);
@@ -64,7 +70,7 @@ function rowCheckJobSettings(options: RowCheckJobOptions): jobs.JobSettings {
     ...(options.compute.mode === 'SERVERLESS' ? { performance_target: options.compute.performanceTarget } : {}),
     ...(runAs ? { run_as: runAs } : {}),
     parameters: [
-      { name: 'configuration_fqn', default: `${options.catalog}.${options.schema}.jdbc_ingestion_config` },
+      { name: 'configuration_fqn', default: configurationFqnOf(options.catalog, options.schema) },
       { name: 'watermark_fqn', default: `${options.catalog}.${options.schema}.jdbc_ingestion_watermark` },
       { name: 'row_check_fqn', default: rowCheckFqn(options.catalog, options.schema) },
       { name: 'check_mode', default: options.checkMode },
@@ -99,115 +105,75 @@ function rowCheckJobSettings(options: RowCheckJobOptions): jobs.JobSettings {
   };
 }
 
-/** Creates or updates the location's row check job. Its default run is the basic check, on the schedule. */
+/** Creates or updates the row check job of the payload's scope (location or group) and mode. */
 export async function saveRowCheckJob(body: RowCheckJobPayload) {
-  const name = rowCheckJobName(body.catalog, body.schema);
+  const name = rowCheckJobName(body.catalog, body.schema, body.ingestionGroup, body.checkMode);
+  const scope = body.ingestionGroup ? `the ${body.ingestionGroup} group` : `${body.catalog}.${body.schema}`;
   const settings = rowCheckJobSettings({
     ...body,
     name,
-    description: 'Compares WaterSync source tables with their targets. Created by the WaterSync control plane.',
-    checkMode: 'basic',
-    ingestionGroup: '',
-    rangeFrom: '',
+    description: `${body.checkMode === 'basic' ? 'Basic' : 'Detailed'} row check of ${scope}. Created by the WaterSync control plane.`,
+    rangeFrom: body.checkMode === 'detailed' ? body.rangeFrom : '',
   });
-  const { jobId, action } = await upsertJob(await findRowCheckJob(body.catalog, body.schema), settings);
+  const existing = await findRowCheckJob(body.catalog, body.schema, body.ingestionGroup, body.checkMode);
+  const { jobId, action } = await upsertJob(existing?.job_id, settings);
   logger.info('row_checks.job_saved', {
     action,
     jobId,
     name,
+    ingestionGroup: body.ingestionGroup,
+    checkMode: body.checkMode,
     scheduled: body.schedule.enabled,
     computeMode: body.compute.mode,
     runAs: body.runAs.mode,
   });
-  return { jobId, action };
+  return { jobId, action, name };
 }
 
-// ── Scheduled checks per group ───────────────────────────────────
-
-export type GroupCheckMode = 'basic' | 'detailed';
-export const groupCheckModes: GroupCheckMode[] = ['basic', 'detailed'];
-/** The job that runs one group's scheduled basic or detailed check, next to its "[group] Ingestion Pipeline". */
-export const groupRowCheckJobName = (ingestionGroup: string, mode: GroupCheckMode) =>
-  `[${ingestionGroup}] Row Check (${mode})`;
-const configurationFqnOf = (catalog: string, schema: string) => `${catalog}.${schema}.jdbc_ingestion_config`;
-
-/**
- * Creates or updates a group's scheduled row check jobs, with the ingestion job's Git source, compute and
- * identity. A check that is turned off keeps its job without a schedule, so its run history and manual runs
- * stay; a check that was never turned on gets no job.
- */
-export async function saveGroupRowCheckJobs(body: JobPayload) {
-  const configurationFqn = configurationFqnOf(body.catalog, body.schema);
-  const results: Partial<Record<GroupCheckMode, { jobId?: number; action: 'created' | 'updated' | 'unscheduled' }>> =
-    {};
-  for (const mode of groupCheckModes) {
-    const check = body.rowChecks[mode];
-    const name = groupRowCheckJobName(body.ingestionGroup, mode);
-    const existing = await findLocationJob(name, configurationFqn);
-    if (!check.enabled && !existing) continue;
-    const settings = rowCheckJobSettings({
-      catalog: body.catalog,
-      schema: body.schema,
-      name,
-      description: `Scheduled ${mode} row check of the ${body.ingestionGroup} group. Created by the WaterSync control plane.`,
-      gitUrl: body.gitUrl,
-      gitBranch: body.gitBranch,
-      compute: body.compute,
-      runAs: body.runAs.job,
-      maxParallelTables: body.rowChecks.maxParallelTables,
-      schedule: check,
-      checkMode: mode,
-      ingestionGroup: body.ingestionGroup,
-      rangeFrom: mode === 'detailed' ? body.rowChecks.detailed.rangeFrom : '',
-    });
-    const { jobId, action } = await upsertJob(existing?.job_id, settings);
-    results[mode] = { jobId, action: check.enabled ? action : 'unscheduled' };
-  }
-  logger.info('row_checks.group_jobs_saved', { ingestionGroup: body.ingestionGroup, results });
-  return results;
+/** Deletes the row check job of a scope and mode; its run history goes with it. */
+export async function deleteRowCheckJob(catalog: string, schema: string, ingestionGroup: string, mode: RowCheckMode) {
+  const existing = await findRowCheckJob(catalog, schema, ingestionGroup, mode);
+  if (!existing?.job_id) return { deleted: false };
+  await workspace.jobs.delete({ job_id: existing.job_id });
+  logger.info('row_checks.job_deleted', { jobId: existing.job_id, ingestionGroup, checkMode: mode });
+  return { deleted: true };
 }
 
-const scheduleOf = (job: jobs.Job | undefined, fallback: Schedule): Schedule =>
-  job?.settings?.schedule
-    ? {
-        enabled: true,
-        quartzCronExpression: job.settings.schedule.quartz_cron_expression,
-        timezoneId: job.settings.schedule.timezone_id,
-        pauseStatus: job.settings.schedule.pause_status ?? 'UNPAUSED',
-      }
-    : { ...fallback, enabled: false };
+const parameterDefault = (job: jobs.Job, name: string) =>
+  job.settings?.parameters?.find((item) => item.name === name)?.default ?? '';
 
-/** A group's scheduled row checks, read back from their jobs (for export and the Jobs page). */
-export async function readGroupRowChecks(
-  catalog: string,
-  schema: string,
-  ingestionGroup: string
-): Promise<GroupRowChecks> {
-  const configurationFqn = configurationFqnOf(catalog, schema);
-  const [basic, detailed] = await Promise.all(
-    groupCheckModes.map((mode) => findLocationJob(groupRowCheckJobName(ingestionGroup, mode), configurationFqn))
-  );
-  const parameter = (job: jobs.Job | undefined, name: string) =>
-    job?.settings?.parameters?.find((item) => item.name === name)?.default ?? '';
-  const defaults = groupRowChecksSchema.parse({});
+/** The settings a row check job was generated from, read back from the Databricks API. */
+function settingsOf(job: jobs.Job, ingestionGroup: string, checkMode: RowCheckMode): RowCheckJobSettings {
+  const settings = job.settings;
   return {
-    maxParallelTables: Number(parameter(basic ?? detailed, 'max_parallel_tables')) || defaults.maxParallelTables,
-    basic: scheduleOf(basic, defaults.basic),
-    detailed: { ...scheduleOf(detailed, defaults.detailed), rangeFrom: parameter(detailed, 'range_from') },
+    ingestionGroup,
+    checkMode,
+    rangeFrom: checkMode === 'detailed' ? parameterDefault(job, 'range_from') : '',
+    gitUrl: settings?.git_source?.git_url ?? '',
+    gitBranch: settings?.git_source?.git_branch ?? 'main',
+    maxParallelTables: Number(parameterDefault(job, 'max_parallel_tables')) || 4,
+    schedule: settings?.schedule
+      ? {
+          enabled: true,
+          quartzCronExpression: settings.schedule.quartz_cron_expression,
+          timezoneId: settings.schedule.timezone_id,
+          pauseStatus: settings.schedule.pause_status ?? 'UNPAUSED',
+        }
+      : { enabled: false, quartzCronExpression: '0 0 6 * * ?', timezoneId: 'UTC', pauseStatus: 'UNPAUSED' },
+    compute: readJobCompute(settings),
+    runAs: runAsTarget(
+      job.run_as_user_name ?? runAsIdentity(settings?.run_as) ?? job.creator_user_name,
+      job.creator_user_name
+    ),
   };
 }
 
-/** The location's row check job as the Databricks API reports it, with its recent runs; null when there is none. */
-export async function readRowCheckJob(catalog: string, schema: string) {
-  const jobId = await findRowCheckJob(catalog, schema);
-  if (!jobId) return null;
-  const job = await workspace.jobs.get({ job_id: jobId });
-  const settings = job.settings;
-  const parameters = new Map((settings?.parameters ?? []).map((item) => [item.name, item.default]));
+async function recentRuns(jobId: number) {
   const runs = [];
   for await (const run of workspace.jobs.listRuns({ job_id: jobId, limit: 10, expand_tasks: false })) {
     runs.push({
       runId: run.run_id,
+      jobId,
       runUrl: run.run_id ? `${workspaceBaseUrl()}/jobs/${jobId}/runs/${run.run_id}` : undefined,
       startTime: run.start_time,
       endTime: run.end_time,
@@ -223,33 +189,96 @@ export async function readRowCheckJob(catalog: string, schema: string) {
     });
     if (runs.length >= 10) break;
   }
-  return {
-    jobId,
-    workspaceUrl: `${workspaceBaseUrl()}/jobs/${jobId}`,
-    gitUrl: settings?.git_source?.git_url ?? '',
-    gitBranch: settings?.git_source?.git_branch ?? 'main',
-    maxParallelTables: Number(parameters.get('max_parallel_tables') ?? 4) || 4,
-    schedule: settings?.schedule ?? null,
-    compute: readJobCompute(settings),
-    runAs: runAsTarget(
-      job.run_as_user_name ?? runAsIdentity(settings?.run_as) ?? job.creator_user_name,
-      job.creator_user_name
-    ),
-    runs,
-  };
+  return runs;
 }
 
-/** Starts the row check job; the default is a basic check of every table, detailed checks name their table. */
+/** The groups of the location's config table, for finding their row check jobs. */
+async function locationGroups(catalog: string, schema: string) {
+  const response = await execute(
+    `SELECT DISTINCT ingestion_group FROM ${tableName(catalog, schema, 'jdbc_ingestion_config')}
+     WHERE ingestion_group IS NOT NULL ORDER BY ingestion_group`
+  );
+  return (await allResponseRows(response)).map((row) => String(row.ingestion_group));
+}
+
+type FoundRowCheckJob = { job: jobs.Job; ingestionGroup: string; checkMode: RowCheckMode };
+
+/**
+ * Finds the row check jobs of the location and of its groups (or of the given groups only). Jobs are found by
+ * name, so the cost follows the number of groups, not the number of jobs in the workspace.
+ */
+async function findRowCheckJobs(catalog: string, schema: string, ingestionGroups?: string[]) {
+  const groups = ingestionGroups ?? (await locationGroups(catalog, schema));
+  const scopes = ['', ...groups].flatMap((ingestionGroup) =>
+    rowCheckModes.map((checkMode) => ({ ingestionGroup, checkMode }))
+  );
+  const found: FoundRowCheckJob[] = [];
+  for (let offset = 0; offset < scopes.length; offset += 8) {
+    const batch = scopes.slice(offset, offset + 8);
+    const jobsFound = await Promise.all(
+      batch.map(({ ingestionGroup, checkMode }) => findRowCheckJob(catalog, schema, ingestionGroup, checkMode))
+    );
+    batch.forEach((scope, index) => {
+      const job = jobsFound[index];
+      if (job?.job_id) found.push({ job, ...scope });
+    });
+  }
+  return found;
+}
+
+/** The location's and its groups' row check jobs as the Databricks API reports them, each with its recent runs. */
+export async function listRowCheckJobs(catalog: string, schema: string, ingestionGroups?: string[]) {
+  const found = await findRowCheckJobs(catalog, schema, ingestionGroups);
+  const result = await Promise.all(
+    found.map(async ({ job, ingestionGroup, checkMode }) => {
+      const jobId = job.job_id!;
+      return {
+        jobId,
+        name: job.settings?.name ?? '',
+        workspaceUrl: `${workspaceBaseUrl()}/jobs/${jobId}`,
+        ...settingsOf(job, ingestionGroup, checkMode),
+        runs: await recentRuns(jobId),
+      };
+    })
+  );
+  logger.debug('row_checks.jobs_listed', { catalog, schema, jobs: result.length });
+  return result;
+}
+
+/** Row check job settings of the location and its groups, for export. */
+export async function readRowCheckJobSettings(catalog: string, schema: string, ingestionGroups: string[]) {
+  const found = await findRowCheckJobs(catalog, schema, ingestionGroups);
+  return found.map(({ job, ingestionGroup, checkMode }) => settingsOf(job, ingestionGroup, checkMode));
+}
+
+/**
+ * Starts a check on a row check job; every run parameter is sent, so any job can run any check. The location's
+ * jobs come first, then the jobs of the checked group, each preferring the requested mode.
+ */
 export async function runRowCheck(body: RowCheckRunPayload) {
-  const jobId = await findRowCheckJob(body.catalog, body.schema);
-  if (!jobId) throw new Error('Set up the row check job for this location first');
+  const otherMode: RowCheckMode = body.checkMode === 'basic' ? 'detailed' : 'basic';
+  const groups = body.ingestionGroup ? ['', body.ingestionGroup] : [''];
+  let job: jobs.Job | undefined;
+  for (const ingestionGroup of groups) {
+    for (const mode of [body.checkMode, otherMode]) {
+      job ??= await findRowCheckJob(body.catalog, body.schema, ingestionGroup, mode);
+    }
+  }
+  const jobId = job?.job_id;
+  if (!jobId) {
+    throw new Error(
+      body.ingestionGroup
+        ? `Create a row check job for this location or for the ${body.ingestionGroup} group first`
+        : 'Create a row check job for this location first'
+    );
+  }
   const run = await workspace.jobs.runNow({
     job_id: jobId,
     job_parameters: {
       check_mode: body.checkMode,
       ingestion_group: body.ingestionGroup,
       source_table_name: body.sourceTableName,
-      // Always sent, so a run never inherits a range from the job defaults.
+      // Always sent, so a run never inherits a range or a group from the job defaults.
       range_column: body.rangeColumn,
       range_from: body.rangeFrom,
       range_to: body.rangeTo,

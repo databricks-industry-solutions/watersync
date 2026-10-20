@@ -2,13 +2,16 @@ import { z } from 'zod';
 import {
   configSchema,
   jobPayloadSchema,
+  rowCheckJobPayloadSchema,
   transferFormat,
   transferVersion,
   type ConfigPayload,
   type JobPayload,
+  type RowCheckJobPayload,
 } from './schemas.js';
 import { allResponseRows, ensureMigrations, execute, parameter, responseRows, tableName } from './sql.js';
 import { readJobSettings, saveJob } from './ingestionJobs.js';
+import { readRowCheckJobSettings, saveRowCheckJob } from './rowChecks.js';
 import { logger, serializeError, errorMessage } from './logging.js';
 
 type ColumnKind = 'STRING' | 'BOOLEAN' | 'INT';
@@ -60,10 +63,18 @@ export async function exportConfiguration(catalog: string, schema: string) {
   const configs = (await allResponseRows(response)).map((row) =>
     Object.fromEntries(configColumns.map(([column, field, kind]) => [field, fromSqlValue(row[column], kind)]))
   );
-  const jobs = await readJobSettings(catalog, schema, [
-    ...new Set(configs.map((config) => String(config.ingestionGroup))),
+  const groups = [...new Set(configs.map((config) => String(config.ingestionGroup)))];
+  const [jobs, rowCheckJobs] = await Promise.all([
+    readJobSettings(catalog, schema, groups),
+    readRowCheckJobSettings(catalog, schema, groups),
   ]);
-  logger.info('transfer.exported', { catalog, schema, configCount: configs.length, jobCount: jobs.length });
+  logger.info('transfer.exported', {
+    catalog,
+    schema,
+    configCount: configs.length,
+    jobCount: jobs.length,
+    rowCheckJobCount: rowCheckJobs.length,
+  });
   return {
     format: transferFormat,
     version: transferVersion,
@@ -71,13 +82,18 @@ export async function exportConfiguration(catalog: string, schema: string) {
     source: { catalog, schema },
     configs,
     jobs,
+    rowCheckJobs,
   };
 }
 
 type ImportPayload = {
   catalog: string;
   schema: string;
-  file: { configs: Record<string, unknown>[]; jobs: Record<string, unknown>[] };
+  file: {
+    configs: Record<string, unknown>[];
+    jobs: Record<string, unknown>[];
+    rowCheckJobs?: Record<string, unknown>[];
+  };
 };
 
 /**
@@ -115,17 +131,26 @@ export function validateImport({ catalog, schema, file }: ImportPayload) {
   };
   const configs = parseEach<ConfigPayload>(file.configs, configSchema, 'configs');
   const jobs = parseEach<JobPayload>(file.jobs, jobPayloadSchema, 'jobs');
+  const rowCheckJobs = parseEach<RowCheckJobPayload>(file.rowCheckJobs ?? [], rowCheckJobPayloadSchema, 'rowCheckJobs');
   rejectDuplicates(configs, 'configs', (config) => `source table ${config.ingestionGroup} / ${config.sourceTableName}`);
   rejectDuplicates(jobs, 'jobs', (job) => `job settings for group ${job.ingestionGroup}`);
+  rejectDuplicates(rowCheckJobs, 'rowCheckJobs', (job) => `${job.checkMode} row check job for ${rowCheckScope(job)}`);
   if (issues.length) throw new z.ZodError(issues);
-  return { configs: configs.map(({ data }) => data), jobs: jobs.map(({ data }) => data) };
+  return {
+    configs: configs.map(({ data }) => data),
+    jobs: jobs.map(({ data }) => data),
+    rowCheckJobs: rowCheckJobs.map(({ data }) => data),
+  };
 }
 
+const rowCheckScope = (job: { ingestionGroup: string }) =>
+  job.ingestionGroup ? `group ${job.ingestionGroup}` : 'the location';
+
 /**
- * Per group: how many source tables the file brings, whether it carries job settings, and which scheduled row
- * checks (basic, detailed) those settings turn on.
+ * Per group: how many source tables the file brings, whether it carries job settings, and which row check jobs
+ * (basic, detailed) it has. Row check jobs of the whole location are not listed per group.
  */
-export function importSummary(configs: ConfigPayload[], jobs: JobPayload[]) {
+export function importSummary(configs: ConfigPayload[], jobs: JobPayload[], rowCheckJobs: RowCheckJobPayload[] = []) {
   type GroupSummary = { ingestionGroup: string; configCount: number; hasJobSettings: boolean; rowChecks: string[] };
   const groups = new Map<string, GroupSummary>();
   const group = (ingestionGroup: string) =>
@@ -137,7 +162,9 @@ export function importSummary(configs: ConfigPayload[], jobs: JobPayload[]) {
   for (const job of jobs) {
     const summary = group(job.ingestionGroup);
     summary.hasJobSettings = true;
-    summary.rowChecks = (['basic', 'detailed'] as const).filter((mode) => job.rowChecks[mode].enabled);
+  }
+  for (const job of rowCheckJobs) {
+    if (job.ingestionGroup) group(job.ingestionGroup).rowChecks.push(job.checkMode);
   }
   return [...groups.values()].sort((a, b) => a.ingestionGroup.localeCompare(b.ingestionGroup));
 }
@@ -193,7 +220,7 @@ async function removeUnlistedConfigs(catalog: string, schema: string, configs: C
 export async function importConfiguration(
   catalog: string,
   schema: string,
-  { configs, jobs }: { configs: ConfigPayload[]; jobs: JobPayload[] },
+  { configs, jobs, rowCheckJobs }: { configs: ConfigPayload[]; jobs: JobPayload[]; rowCheckJobs: RowCheckJobPayload[] },
   options: { replaceGroups: boolean; deployJobs: boolean }
 ) {
   await ensureMigrations(catalog, schema);
@@ -212,6 +239,18 @@ export async function importConfiguration(
       }
     }
   }
+  const rowCheckJobResults = [];
+  if (options.deployJobs) {
+    for (const job of rowCheckJobs) {
+      const scope = { ingestionGroup: job.ingestionGroup, checkMode: job.checkMode };
+      try {
+        rowCheckJobResults.push({ ...scope, ...(await saveRowCheckJob(job)) });
+      } catch (error) {
+        logger.warn('transfer.row_check_job_failed', { ...scope, error: serializeError(error) });
+        rowCheckJobResults.push({ ...scope, error: errorMessage(error) });
+      }
+    }
+  }
   logger.info('transfer.imported', {
     catalog,
     schema,
@@ -219,6 +258,8 @@ export async function importConfiguration(
     removedCount,
     jobCount: jobResults.length,
     failedJobCount: jobResults.filter((result) => 'error' in result).length,
+    rowCheckJobCount: rowCheckJobResults.length,
+    failedRowCheckJobCount: rowCheckJobResults.filter((result) => 'error' in result).length,
   });
-  return { configCount: configs.length, removedCount, jobs: jobResults };
+  return { configCount: configs.length, removedCount, jobs: jobResults, rowCheckJobs: rowCheckJobResults };
 }

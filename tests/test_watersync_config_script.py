@@ -60,16 +60,16 @@ class WaterSyncConfigScriptTest(unittest.TestCase):
             "/api/import": [FakeResponse(200, IMPORTED)],
             "/api/jobs": [
                 FakeResponse(200, {"jobId": 1, "pipelineId": "p", "action": "created"}),
-                FakeResponse(200, {
-                    "jobId": 2,
-                    "action": "updated",
-                    "rowCheckJobs": {"basic": {"jobId": 3, "action": "created"}},
-                }),
+                FakeResponse(200, {"jobId": 2, "action": "updated"}),
+            ],
+            "/api/row-checks/job": [
+                FakeResponse(200, {"jobId": 3, "action": "created", "name": "[sales] Row Check (basic)"}),
             ],
         })
         logs: list[str] = []
+        file = {**FILE, "rowCheckJobs": [{"ingestionGroup": "sales", "checkMode": "basic"}]}
         succeeded = watersync_config.import_config(
-            self.app(session), "prod", "ws", FILE, replace_groups=True, deploy_jobs=True, log=logs.append
+            self.app(session), "prod", "ws", file, replace_groups=True, deploy_jobs=True, log=logs.append
         )
         self.assertTrue(succeeded)
         _, _, import_body = session.calls[0]
@@ -81,7 +81,10 @@ class WaterSyncConfigScriptTest(unittest.TestCase):
         self.assertEqual([body["ingestionGroup"] for body in job_bodies], ["hr", "sales"])
         self.assertTrue(all(body["catalog"] == "prod" and body["schema"] == "ws" for body in job_bodies))
         self.assertIn("Job for hr: created job 1, CDC pipeline p", logs)
-        self.assertIn("Job for sales: updated job 2, basic row check job 3 created", logs)
+        self.assertIn("Job for sales: updated job 2", logs)
+        check_bodies = [body for _, path, body in session.calls if path == "/api/row-checks/job"]
+        self.assertEqual(check_bodies, [{"ingestionGroup": "sales", "checkMode": "basic", "catalog": "prod", "schema": "ws"}])
+        self.assertIn("Basic row check job for sales: created job 3 ([sales] Row Check (basic))", logs)
 
     def test_a_failing_job_does_not_stop_the_others_but_fails_the_import(self) -> None:
         session = FakeSession({

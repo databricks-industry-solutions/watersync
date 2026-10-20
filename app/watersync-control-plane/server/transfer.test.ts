@@ -13,6 +13,8 @@ vi.mock('./sql.js', () => ({
   allResponseRows: vi.fn(),
 }));
 vi.mock('./ingestionJobs.js', () => ({ saveJob, readJobSettings: vi.fn() }));
+const saveRowCheckJob = vi.fn();
+vi.mock('./rowChecks.js', () => ({ saveRowCheckJob, readRowCheckJobSettings: vi.fn() }));
 
 const { validateImport, importSummary, importConfiguration } = await import('./transfer.js');
 
@@ -103,31 +105,83 @@ describe('importSummary', () => {
   });
 });
 
-describe('scheduled row checks in a file', () => {
-  const on = { enabled: true, quartzCronExpression: '0 0 6 * * ?', timezoneId: 'UTC', pauseStatus: 'UNPAUSED' };
+describe('row check jobs in a file', () => {
+  const rowCheckJob = (overrides: Record<string, unknown> = {}) => ({
+    gitUrl: 'https://github.com/databricks-industry-solutions/watersync',
+    gitBranch: 'main',
+    maxParallelTables: 4,
+    schedule: { enabled: true, quartzCronExpression: '0 0 6 * * ?', timezoneId: 'UTC', pauseStatus: 'UNPAUSED' },
+    ...overrides,
+  });
 
-  it('lists the checks a group turns on', () => {
-    const { configs, jobs } = validateImport({
+  it("lists each group's checks; the location's checks are not a group", () => {
+    const { configs, jobs, rowCheckJobs } = validateImport({
       ...location,
-      file: { configs: [config()], jobs: [job({ rowChecks: { basic: on, detailed: { ...on, rangeFrom: '-30d' } } })] },
+      file: {
+        configs: [config()],
+        jobs: [job()],
+        rowCheckJobs: [
+          rowCheckJob(),
+          rowCheckJob({ ingestionGroup: 'sales' }),
+          rowCheckJob({ ingestionGroup: 'sales', checkMode: 'detailed', rangeFrom: '-30d' }),
+        ],
+      },
     });
-    expect(importSummary(configs, jobs)[0].rowChecks).toEqual(['basic', 'detailed']);
-    expect(jobs[0].rowChecks.detailed.rangeFrom).toBe('-30d');
+    expect(rowCheckJobs[0]).toMatchObject({ catalog: 'dev', ingestionGroup: '', checkMode: 'basic' });
+    expect(importSummary(configs, jobs, rowCheckJobs)).toEqual([
+      { ingestionGroup: 'sales', configCount: 1, hasJobSettings: true, rowChecks: ['basic', 'detailed'] },
+    ]);
   });
 
-  it('imports job settings exported before row checks existed, with both checks off', () => {
-    const { jobs } = validateImport({ ...location, file: { configs: [config()], jobs: [job()] } });
-    expect(jobs[0].rowChecks.basic.enabled).toBe(false);
-    expect(jobs[0].rowChecks.detailed.enabled).toBe(false);
-  });
-
-  it('rejects a range that the check could not parse', () => {
-    expect(() =>
+  it('rejects a range that the check could not parse, and two jobs for one scope and mode', () => {
+    let error: unknown;
+    try {
       validateImport({
         ...location,
-        file: { configs: [config()], jobs: [job({ rowChecks: { detailed: { ...on, rangeFrom: 'last month' } } })] },
-      })
-    ).toThrow(/days back/);
+        file: {
+          configs: [config()],
+          jobs: [],
+          rowCheckJobs: [
+            rowCheckJob({ checkMode: 'detailed', rangeFrom: 'last month' }),
+            rowCheckJob({ ingestionGroup: 'sales' }),
+            rowCheckJob({ ingestionGroup: 'sales' }),
+          ],
+        },
+      });
+    } catch (caught) {
+      error = caught;
+    }
+    const issues = (error as z.ZodError).issues;
+    expect(issues.map((issue) => issue.path.join('.'))).toEqual([
+      'file.rowCheckJobs.0.rangeFrom',
+      'file.rowCheckJobs.2',
+    ]);
+    expect(issues[0].message).toMatch(/days back/);
+  });
+
+  it('deploys them with the jobs, and keeps going when one fails', async () => {
+    const entries = validateImport({
+      ...location,
+      file: {
+        configs: [config()],
+        jobs: [],
+        rowCheckJobs: [rowCheckJob(), rowCheckJob({ ingestionGroup: 'sales', checkMode: 'detailed' })],
+      },
+    });
+    saveRowCheckJob
+      .mockRejectedValueOnce(new Error('PERMISSION_DENIED'))
+      .mockResolvedValueOnce({ jobId: 12, action: 'created', name: '[sales] Row Check (detailed)' });
+    const result = await importConfiguration('dev', 'watersync', entries, { replaceGroups: false, deployJobs: true });
+    expect(result.rowCheckJobs).toEqual([
+      { ingestionGroup: '', checkMode: 'basic', error: 'PERMISSION_DENIED' },
+      {
+        ingestionGroup: 'sales',
+        checkMode: 'detailed',
+        jobId: 12,
+        action: 'created',
+        name: '[sales] Row Check (detailed)',
+      },
+    ]);
   });
 });
 
@@ -163,6 +217,7 @@ describe('importConfiguration', () => {
       configCount: 2,
       removedCount: 2,
       jobs: [{ ingestionGroup: 'sales', jobId: 7, pipelineId: 'p', action: 'created' }],
+      rowCheckJobs: [],
     });
   });
 

@@ -348,43 +348,6 @@ function ScheduleBadge({ job }: { job: JobRow }) {
   );
 }
 
-/** The group's scheduled basic and detailed row checks: their schedule, or that they are not set up. */
-function RowCheckSchedules({ job }: { job: JobRow }) {
-  const checks = (['basic', 'detailed'] as const).map((mode) => ({ mode, check: job.row_checks?.[mode] ?? null }));
-  return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-      <span className="font-medium text-foreground">Row checks</span>
-      {checks.map(({ mode, check }) => {
-        const schedule = check?.schedule;
-        const state = !check
-          ? 'not set up'
-          : !schedule
-            ? 'manual only'
-            : schedule.pause_status === 'PAUSED'
-              ? 'paused'
-              : null;
-        const label = `${mode} · ${state ?? schedule?.quartz_cron_expression}`;
-        return check?.workspace_url ? (
-          <a
-            key={mode}
-            href={check.workspace_url}
-            target="_blank"
-            rel="noreferrer"
-            className="font-mono hover:text-foreground hover:underline"
-            title={schedule ? `${schedule.quartz_cron_expression} (${schedule.timezone_id})` : undefined}
-          >
-            {label}
-          </a>
-        ) : (
-          <span key={mode} className="font-mono">
-            {label}
-          </span>
-        );
-      })}
-    </div>
-  );
-}
-
 function RunTimeline({ job, compact = false }: { job: JobRow; compact?: boolean }) {
   return (
     <div
@@ -530,9 +493,6 @@ function JobCard({ job, actions }: { job: JobRow; actions: JobActionHandlers }) 
           ) : (
             <p className="text-xs text-muted-foreground">Runs only when manually triggered.</p>
           )}
-          <div className="mt-2">
-            <RowCheckSchedules job={job} />
-          </div>
         </div>
         <div>
           <div className="mb-2 flex items-center justify-between gap-3 text-xs text-muted-foreground">
@@ -593,9 +553,6 @@ function JobTable({ jobs, actions }: { jobs: JobRow[]; actions: JobActionHandler
                     </span>
                   )}
                 </div>
-                <div className="mt-1">
-                  <RowCheckSchedules job={job} />
-                </div>
               </TableCell>
               <TableCell>
                 {job.runs.length ? (
@@ -646,11 +603,6 @@ function JobDialog({
   const [ingestionGroup, setIngestionGroup] = useState(initialGroup);
   const [scheduleEnabled, setScheduleEnabled] = useState(false);
   const [scheduleActive, setScheduleActive] = useState(true);
-  // The group's scheduled row checks: a daily basic check is on by default, the detailed check is opt-in.
-  const [basicCheckEnabled, setBasicCheckEnabled] = useState(true);
-  const [basicCheckActive, setBasicCheckActive] = useState(true);
-  const [detailedCheckEnabled, setDetailedCheckEnabled] = useState(false);
-  const [detailedCheckActive, setDetailedCheckActive] = useState(true);
   const [gitUrl, setGitUrl] = useState('https://github.com/databricks-industry-solutions/watersync');
   const [gitBranch, setGitBranch] = useState('main');
   const [computeMode, setComputeMode] = useState<'SERVERLESS' | 'JOB_CLUSTER'>('SERVERLESS');
@@ -687,11 +639,7 @@ function JobDialog({
     setError(null);
     try {
       const form = new FormData(e.currentTarget);
-      const result = await api<{
-        jobId: number;
-        action: 'created' | 'updated';
-        rowCheckJobs?: Partial<Record<'basic' | 'detailed', { jobId?: number; action: string }>>;
-      }>('/api/jobs', {
+      const result = await api<{ jobId: number; action: 'created' | 'updated' }>('/api/jobs', {
         method: 'POST',
         body: JSON.stringify({
           ...location,
@@ -722,28 +670,9 @@ function JobDialog({
             job: { mode: jobRunAsMode, principal: formString(form, 'jobRunAsPrincipal', '') },
             pipeline: { mode: pipelineRunAsMode, principal: formString(form, 'pipelineRunAsPrincipal', '') },
           },
-          rowChecks: {
-            maxParallelTables: Number(form.get('rowCheckParallel') ?? 4),
-            basic: {
-              enabled: basicCheckEnabled,
-              quartzCronExpression: formString(form, 'basicQuartzCronExpression', '0 0 6 * * ?'),
-              timezoneId: formString(form, 'basicTimezoneId', 'UTC'),
-              pauseStatus: basicCheckActive ? 'UNPAUSED' : 'PAUSED',
-            },
-            detailed: {
-              enabled: detailedCheckEnabled,
-              quartzCronExpression: formString(form, 'detailedQuartzCronExpression', '0 0 7 ? * SUN'),
-              timezoneId: formString(form, 'detailedTimezoneId', 'UTC'),
-              pauseStatus: detailedCheckActive ? 'UNPAUSED' : 'PAUSED',
-              rangeFrom: formString(form, 'detailedRangeFrom', ''),
-            },
-          },
         }),
       });
-      const checks = Object.entries(result.rowCheckJobs ?? {})
-        .map(([mode, check]) => `${mode} row check job ${check.jobId} ${check.action}`)
-        .join(', ');
-      alert(`Job ${result.jobId} ${result.action}${checks ? `; ${checks}` : ''}`);
+      alert(`Job ${result.jobId} ${result.action}`);
       onSaved();
     } catch (x) {
       setError(reportError('jobs.save', x, { ...location, ingestionGroup, computeMode }));
@@ -771,7 +700,6 @@ function JobDialog({
               <TabsTrigger value="compute">Job Compute</TabsTrigger>
               {hasCdcPipeline && <TabsTrigger value="pipeline">SDP Compute</TabsTrigger>}
               <TabsTrigger value="schedule">Schedule</TabsTrigger>
-              <TabsTrigger value="row-checks">Row checks</TabsTrigger>
               <TabsTrigger value="run-as">Run as</TabsTrigger>
             </TabsList>
             <TabsContent value="job" data-tab="job" forceMount className="mt-4 space-y-4 data-[state=inactive]:hidden">
@@ -907,71 +835,6 @@ function JobDialog({
                 active={scheduleActive}
                 onActiveChange={setScheduleActive}
               />
-            </TabsContent>
-            <TabsContent
-              value="row-checks"
-              data-tab="row-checks"
-              forceMount
-              className="mt-4 data-[state=inactive]:hidden"
-            >
-              <div className="space-y-5">
-                <p className="text-sm text-muted-foreground">
-                  Each check is its own job next to this one,{' '}
-                  <span className="font-mono">[{ingestionGroup || 'group'}] Row Check (basic)</span> and{' '}
-                  <span className="font-mono">(detailed)</span>, with this job&apos;s Git source, compute and identity.
-                  Both check every enabled table of the group and write to the Row checks page. Turning a check off
-                  keeps its job without a schedule.
-                </p>
-                <ScheduleFields
-                  prefix="basic"
-                  title="Scheduled basic check"
-                  description="Compares the row counts of source and target. Cheap: one COUNT(*) per side and table."
-                  enabled={basicCheckEnabled}
-                  onEnabledChange={setBasicCheckEnabled}
-                  active={basicCheckActive}
-                  onActiveChange={setBasicCheckActive}
-                  schedule={{ quartz_cron_expression: '0 0 6 * * ?', timezone_id: 'UTC' }}
-                />
-                <ScheduleFields
-                  prefix="detailed"
-                  title="Scheduled detailed check"
-                  description="Compares per-chunk aggregates, then the rows of the chunks that differ. Reads more; schedule it less often."
-                  enabled={detailedCheckEnabled}
-                  onEnabledChange={setDetailedCheckEnabled}
-                  active={detailedCheckActive}
-                  onActiveChange={setDetailedCheckActive}
-                  schedule={{ quartz_cron_expression: '0 0 7 ? * SUN', timezone_id: 'UTC' }}
-                />
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="detailed-range-from">Detailed check: rows from (optional)</Label>
-                    <Input
-                      id="detailed-range-from"
-                      name="detailedRangeFrom"
-                      placeholder="-30d"
-                      disabled={!detailedCheckEnabled}
-                      pattern="^$|^-?\d+(\.\d+)?$|^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}:\d{2})?$|^-\d{1,5}d$"
-                      title="A number, a date (2026-09-01), a timestamp (2026-09-01 12:00:00) or days back (-30d)"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Checks only rows from this value of each table&apos;s chunk column, for example the last 30 days
-                      (-30d). Empty checks every row.
-                    </p>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="row-check-parallel">Tables checked in parallel</Label>
-                    <Input
-                      id="row-check-parallel"
-                      name="rowCheckParallel"
-                      type="number"
-                      min={1}
-                      max={32}
-                      defaultValue={4}
-                      required
-                    />
-                  </div>
-                </div>
-              </div>
             </TabsContent>
             <TabsContent value="run-as" data-tab="run-as" forceMount className="mt-4 data-[state=inactive]:hidden">
               <div className="grid gap-4 md:grid-cols-2">

@@ -12,12 +12,8 @@ import {
 } from './pipelines.js';
 import { logger, serializeError } from './logging.js';
 import { findLocationJob, jobCompute, readJobCompute, runAsIdentity, runAsTarget } from './jobCompute.js';
-import { groupCheckModes, groupRowCheckJobName, readGroupRowChecks, saveGroupRowCheckJobs } from './rowChecks.js';
 
 const jobName = (ingestionGroup: string) => `[${ingestionGroup}] Ingestion Pipeline`;
-// configuration_fqn is `<catalog>.<schema>.jdbc_ingestion_config`, with identifier parts that contain no dots.
-const catalogOf = (configurationFqn: string) => configurationFqn.split('.')[0];
-const schemaOf = (configurationFqn: string) => configurationFqn.split('.')[1];
 
 /** Creates or updates the group's job (and its CDC pipeline when the group needs one). */
 export async function saveJob(body: JobPayload) {
@@ -140,9 +136,7 @@ export async function saveJob(body: JobPayload) {
     jobRunAs: body.runAs.job.mode,
     pipelineRunAs: body.runAs.pipeline.mode,
   });
-  // The group's scheduled row checks run with the same Git source, compute and identity as its ingestion job.
-  const rowCheckJobs = await saveGroupRowCheckJobs(body);
-  return { jobId, pipelineId: cdcPipelineId, action, rowCheckJobs };
+  return { jobId, pipelineId: cdcPipelineId, action };
 }
 
 const defaultSchedule = {
@@ -182,29 +176,10 @@ export async function listGroupJobs(catalog: string, schema: string, ingestionGr
           });
           if (runs.length >= 10) break;
         }
-        const rowCheckJobs = await Promise.all(
-          groupCheckModes.map((mode) => findLocationJob(groupRowCheckJobName(ingestionGroup, mode), configurationFqn))
-        );
-        const rowChecks = Object.fromEntries(
-          groupCheckModes.map((mode, index) => {
-            const check = rowCheckJobs[index];
-            return [
-              mode,
-              check?.job_id
-                ? {
-                    job_id: check.job_id,
-                    schedule: check.settings?.schedule ?? null,
-                    workspace_url: `${workspaceUrl}/jobs/${check.job_id}`,
-                  }
-                : null,
-            ];
-          })
-        );
         return {
           ingestionGroup,
           job: {
             job_id: job.job_id,
-            row_checks: rowChecks,
             settings: { name: job.settings?.name, schedule: job.settings?.schedule },
             creator_user_name: job.creator_user_name,
             created_time: job.created_time,
@@ -279,7 +254,6 @@ async function readGroupJobSettings(ingestionGroup: string, configurationFqn: st
               photon: pipeline.spec.photon ?? false,
             }
           : { mode: 'SERVERLESS', nodeTypeId: '', driverNodeTypeId: '', minWorkers: 1, maxWorkers: 4, photon: false },
-      rowChecks: await readGroupRowChecks(catalogOf(configurationFqn), schemaOf(configurationFqn), ingestionGroup),
       runAs: {
         job: runAsTarget(jobIdentity, job.creator_user_name),
         // The run-as of a pipeline supplied by ID is not WaterSync's to set.
