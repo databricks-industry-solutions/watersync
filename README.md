@@ -1,4 +1,9 @@
-# watersync
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/watersync-logo-dark.svg">
+    <img alt="WaterSync" src="docs/assets/watersync-logo.svg" height="64">
+  </picture>
+</h1>
 
 Python package and Databricks App for metadata-driven JDBC ingestion into Delta, with timestamp-watermark and EPIC Clarity CSA change tracking, SCD Type 2 history via Lakeflow Spark Declarative Pipelines, and Lakeflow Job provisioning.
 

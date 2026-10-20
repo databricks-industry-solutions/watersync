@@ -61,10 +61,22 @@ A table is `MISMATCH` when the counts differ, tier 3 found a row difference, or 
 A check can be limited to a range of rows, so a large table can be checked one slice at a time, for example its last 30 days. In the app, turn on **Check a range of rows only** in the **Detailed check** dialog. From a job run or the CLI, set `range_from` and/or `range_to`.
 
 - The range is `range_from <= column < range_to`; leave a bound empty for no limit on that side.
-- The column is `range_column`, or by default the table's chunk column (see tier 2). A table without a chunk column needs `range_column`, otherwise it is reported as `ERROR`.
+- The column is `range_column` when set. Otherwise it depends on the bounds:
+  - **A number** bounds the table's chunk column (see tier 2). A table whose chunk column is not an integer, or that has none, needs `range_column`, otherwise it is reported as `ERROR`.
+  - **A date, a timestamp or days back** (`-30d`) bounds the timestamp (or date) watermark column, else the chunk column when that is a timestamp. A table with neither, for example a full load without a timestamp, is checked in full, and `checked_range` says so. **EPIC CSA** tables are handled differently, see [Ranges on EPIC CSA tables](#ranges-on-epic-csa-tables).
 - Bounds are a number, a date (`2026-09-01`), a timestamp (`2026-09-01 12:00:00`) or a number of days back (`-30d`, from midnight of the job's clock, which is UTC on serverless and on job clusters unless they set another time zone). They are parsed for the column's type and never inserted into SQL as text.
 - The range applies to every tier, on both sides: the counts, the chunk aggregates and the rows tier 3 reads. With integer chunks, the 100 ranges are spread over the checked rows only, so a narrow range gets narrow chunks.
 - Each result keeps the range in `checked_range`, and the app shows it under the result, so a partial check is never mistaken for the whole table.
+
+#### Ranges on EPIC CSA tables
+
+EPIC CSA tables usually have no timestamp column: changes are tracked in the CSA change table, `epic_util.csa_<table>`, which the ingestion reads too. A date, timestamp or days-back range on a CSA table (without `range_column`) checks the rows whose key the change table lists as changed in the range (`range_from <= _UPDATE_DT < range_to`):
+
+- On the source, the rows with such a key; on the target, the active rows with the same keys. A deleted key is still listed, so a row that is still active in the target shows up as extra.
+- The chunks are planned as usual (by the integer key, for example), over these rows only.
+- **The change table keeps changes only for its retention period.** A range start older than the oldest change in the table checks only what is left, and `checked_range` then says how far back the change table reached, for example `keys changed since 2026-09-20 00:00:00 in epic_util.csa_pat_enc; CSA keeps changes only since 2026-10-15 00:00:00, so earlier changes were not checked`.
+- **So schedule a ranged detailed check more often than the CSA retention period**, with a range start within it. With a retention of 5 days and a weekly check, the changes of 2 days each week are never checked; every 4 days with `-5d` leaves no gap. Changes that were never ingested and have left the change table cannot be found this way; a detailed check without a range start (every row) finds them.
+- A number range on a CSA table still bounds its chunk column.
 
 A row whose range column changed in the source but not yet in the target (for example a `modified_at` that moved into the range) is on one side of the filter only, so it shows up as missing or extra.
 
@@ -84,9 +96,11 @@ A [full refresh](CDC-Pipeline-and-Full-Refresh#full-refresh) of the table resync
 The page of the [Control Plane App](Control-Plane-App) shows, from top to bottom:
 
 - **Filter bar.** A group, up to 8 picked tables (one per chart color) and a table-name search, applied to every section below. The filtering runs on the SQL warehouse, so the page works the same with thousands of tables.
-- **Summary.** One line with the latest basic check of the filtered tables: how many match, differ or failed, the last check and the schedule.
+- **Row check jobs.** The row check jobs of the location and of its groups: what each checks (basic or detailed, every group or one), its schedule, its compute and its latest run, with **Run now**, **Edit** and **Delete**. Jobs for every group are always listed first; group jobs follow the group filter (or the groups of the picked tables, but not the name search) and are paged. **New row check job** creates one (see [Row check jobs](#row-check-jobs)).
+- **Summary.** One line with the latest basic check of the filtered tables: how many match, differ or failed, the last check and how many row check jobs are scheduled.
+- **Status of every table.** One square per enabled table, grouped by ingestion group and coloured by its worst latest result, basic or detailed: error, mismatch, match or not checked. Click a square to show only that table, with any status, and jump to its row; click it again to show every table. The map follows the group and name filters but not picked tables, so every table stays visible while one is picked. Above 300 tables the squares shrink and the map scrolls; it shows at most 5,000 tables.
 - **Daily row counts.** For the last 30 days (UTC), from each day's last whole-table basic check: the rows ingested per day (the target's growth since the previous checked day, net of deletes; on the first checked day, since that day's first check) and the target − source difference. Unless tables are picked, the 7 series with the most rows ingested are shown by name and the others add up into "Other".
-- **Recent check runs** of the row check job.
+- **Recent check runs** of every row check job, newest first.
 - **Groups or tables**, problems first, 100 at a time with **Show more**, narrowed further by status (needs attention, match, not checked).
 
 What the chart and the list show follows the selection:
@@ -121,31 +135,43 @@ Each check appends one row per table to `<catalog>.<schema>._watersync_row_check
 
 The app shows the latest basic and the latest detailed result of each table. Query the table for the history.
 
-## The row check job
+## Row check jobs
 
-The app creates one job per metadata location, named `[<catalog>.<schema>] Row Checks`, from **Set up job** on the **Row checks** page. It runs `notebooks/Task - Row Check` from your Git repository and installs the package from the same branch, like the [ingestion jobs](Control-Plane-App#jobs-created-by-the-app), and its dialog has the same tabs, minus the SDP ones:
+Row check jobs are created on the **Row checks** page, with **New row check job**, separately from the [ingestion jobs](Control-Plane-App#jobs-created-by-the-app). Each job runs one check over every enabled table of the location or of one ingestion group, so there is at most one job per scope and check:
+
+| Job | Runs | Default schedule |
+| --- | --- | --- |
+| `[<catalog>.<schema>] Row Checks` | The basic check of every enabled table of the location | `0 0 6 * * ?` (daily, 06:00 UTC) |
+| `[<catalog>.<schema>] Row Checks (detailed)` | The detailed check of every enabled table of the location | `0 0 7 ? * SUN` (weekly, Sunday 07:00 UTC) |
+| `[<group>] Row Check (basic)` | The basic check of every enabled table of the group | `0 0 6 * * ?` |
+| `[<group>] Row Check (detailed)` | The detailed check of every enabled table of the group | `0 0 7 ? * SUN` |
+
+A job runs `notebooks/Task - Row Check` from your Git repository and installs the package from the same branch, like the ingestion jobs. Its dialog has these tabs:
 
 | Tab | Settings |
 | --- | --- |
+| **Check** | Which tables (every group, or one group) and which check (basic or detailed). A detailed check can be limited to rows from a [range](#checking-a-range) start such as `-30d`. Both are fixed once the job exists, because they name it |
 | **Git source & execution** | GitHub repository and branch, and how many tables are checked at the same time |
 | **Job Compute** | **Serverless** (default) with a performance mode, or a **shared autoscaling job cluster** (Databricks Runtime, driver and worker node types, min/max workers) for workspaces without serverless jobs |
 | **Schedule** | Quartz cron expression, time zone, active or paused; or manual runs only |
 | **Run as** | The job's owner (the app service principal, default), a user, or a service principal |
 
-The dialog opens with the job's current settings, read back from the Databricks API. Detailed checks aggregate the whole target table in Spark, so size a job cluster like the ingestion one.
+**Run now** runs the job once with its own settings, as its schedule would; it is disabled while the job runs. **Edit** opens the dialog with the job's current settings, read back from the Databricks API. Creating a job for a scope and check that already has one updates that job. **Delete** deletes the job and its run history; the check results stay. Detailed checks aggregate the whole target table in Spark, so size a job cluster like the ingestion one.
 
 | Job parameter | Default | Meaning |
 | --- | --- | --- |
-| `check_mode` | `basic` | `basic` or `detailed` |
-| `ingestion_group` | empty | Check one group; empty checks every group |
+| `check_mode` | the job's check | `basic` or `detailed` |
+| `ingestion_group` | the job's group | Check one group; empty checks every group |
 | `source_table_name` | empty | Check one table; empty checks every table |
 | `max_parallel_tables` | `4` | Tables checked at the same time (1–32) |
-| `range_column`, `range_from`, `range_to` | empty | Check only rows with `range_from <= range_column < range_to` (see [Checking a range](#checking-a-range)) |
+| `range_column`, `range_from`, `range_to` | empty, except a detailed job's `range_from` | Check only rows with `range_from <= range_column < range_to` (see [Checking a range](#checking-a-range)) |
 | `configuration_fqn`, `watermark_fqn`, `row_check_fqn` | the location's tables | Where configs are read and results written |
 
-The schedule (`0 0 6 * * ?`, UTC, by default) runs the basic check of every table. **Detailed check** runs the job once with `check_mode=detailed` and that table. The job allows 4 concurrent runs, so a detailed check can start while the scheduled check is running. The page shows the job's last runs, and while one runs it polls every 15 seconds and reloads the results when it ends.
+**Run basic check** and **Detailed check** on the page start a run of an existing job with every parameter set, so any row check job can run them: the location's jobs first, otherwise a job of the table's group. **Run basic check** checks the group the page is filtered to, or every table. Without a location job, checks can only be started for groups that have one. Each job allows 4 concurrent runs, so a check can start while a scheduled one is running. While a run is going the page polls every 15 seconds and reloads the results when it ends.
 
 Whichever identity the job runs as needs the same source access as the ingestion jobs (UC connections, secret scopes or UC secrets) and `SELECT` on the target tables. Running as a user or another service principal has the same requirements for the app as for an ingestion job.
+
+[Export](Import-and-Export) reads the row check jobs back from the Databricks API, and an import with **Create or update jobs** creates or updates them.
 
 ## From Python or the CLI
 

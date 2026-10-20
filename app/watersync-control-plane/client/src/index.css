@@ -141,6 +141,14 @@ body {
   color: var(--success);
   padding: 0.85rem 1rem;
 }
+.hero-health-danger {
+  background: color-mix(in oklch, var(--destructive) 12%, var(--card));
+  color: var(--destructive);
+}
+.hero-health-warning {
+  background: color-mix(in oklch, var(--warning) 16%, var(--card));
+  color: var(--warning-foreground);
+}
 .metric-card {
   position: relative;
   min-height: 9.5rem;
@@ -511,4 +519,58 @@ tbody tr:hover {
 }
 .check-group-divider {
   border-left: 1px solid var(--border);
+}
+
+/* Row checks status map: one square per table, coloured by its worst latest result. */
+.status-map {
+  --cell: 14px;
+}
+.status-map-compact {
+  --cell: 10px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+/* The label's line box matches one row of squares, so it lines up with the first row. */
+.status-map-label {
+  line-height: var(--cell);
+}
+.status-cell {
+  display: inline-block;
+  width: var(--cell, 14px);
+  height: var(--cell, 14px);
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+.status-map-compact .status-cell {
+  border-radius: 2px;
+}
+.status-cell-error {
+  background: var(--warning);
+}
+.status-cell-mismatch {
+  background: var(--destructive);
+}
+.status-cell-match {
+  background: color-mix(in oklch, var(--success) 75%, var(--card));
+}
+.status-cell-unchecked {
+  background: transparent;
+  border: 1px dashed color-mix(in oklch, var(--muted-foreground) 60%, transparent);
+}
+.status-cell-button {
+  padding: 0;
+  cursor: pointer;
+  transition: transform 80ms ease;
+}
+.status-cell-button:hover {
+  transform: scale(1.25);
+}
+.status-cell-button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+.status-cell-selected {
+  box-shadow:
+    0 0 0 2px var(--card),
+    0 0 0 4px var(--foreground);
 }

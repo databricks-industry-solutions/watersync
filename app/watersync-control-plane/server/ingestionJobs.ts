@@ -1,6 +1,6 @@
 import type { jobs } from '@databricks/sdk-experimental';
 import { toRunAs, type JobPayload, type JobSettings } from './schemas.js';
-import { workspace } from './sql.js';
+import { workspace, workspaceBaseUrl } from './sql.js';
 import {
   cdcPipelineName,
   groupNeedsCdcPipeline,
@@ -11,7 +11,7 @@ import {
   watersyncDependency,
 } from './pipelines.js';
 import { logger, serializeError } from './logging.js';
-import { jobCompute, readJobCompute, runAsIdentity, runAsTarget } from './jobCompute.js';
+import { findLocationJob, jobCompute, readJobCompute, runAsIdentity, runAsTarget } from './jobCompute.js';
 
 const jobName = (ingestionGroup: string) => `[${ingestionGroup}] Ingestion Pipeline`;
 
@@ -145,6 +145,59 @@ const defaultSchedule = {
   timezoneId: 'America/New_York',
   pauseStatus: 'UNPAUSED',
 } as const;
+
+/**
+ * The jobs of a page of ingestion groups at a location, each with its last 10 runs, and the groups that have no
+ * job yet. Jobs are found by name, so the cost follows the page size, not the number of jobs in the workspace.
+ */
+export async function listGroupJobs(catalog: string, schema: string, ingestionGroups: string[]) {
+  const configurationFqn = `${catalog}.${schema}.jdbc_ingestion_config`;
+  const workspaceUrl = workspaceBaseUrl();
+  const jobsFound = [];
+  const missing: string[] = [];
+  for (let offset = 0; offset < ingestionGroups.length; offset += 8) {
+    const batch = ingestionGroups.slice(offset, offset + 8);
+    const found = await Promise.all(
+      batch.map(async (ingestionGroup) => {
+        const job = await findLocationJob(jobName(ingestionGroup), configurationFqn);
+        if (!job?.job_id) return { ingestionGroup, job: undefined };
+        const runs = [];
+        for await (const run of workspace.jobs.listRuns({ job_id: job.job_id, limit: 10, expand_tasks: false })) {
+          runs.push({
+            run_id: run.run_id,
+            run_url: run.run_id ? `${workspaceUrl}/jobs/${job.job_id}/runs/${run.run_id}` : undefined,
+            run_name: run.run_name,
+            start_time: run.start_time,
+            end_time: run.end_time,
+            setup_duration: run.setup_duration,
+            execution_duration: run.execution_duration,
+            cleanup_duration: run.cleanup_duration,
+            state: run.state,
+          });
+          if (runs.length >= 10) break;
+        }
+        return {
+          ingestionGroup,
+          job: {
+            job_id: job.job_id,
+            settings: { name: job.settings?.name, schedule: job.settings?.schedule },
+            creator_user_name: job.creator_user_name,
+            created_time: job.created_time,
+            ingestion_group: ingestionGroup,
+            workspace_url: `${workspaceUrl}/jobs/${job.job_id}`,
+            runs,
+          },
+        };
+      })
+    );
+    for (const item of found) {
+      if (item.job) jobsFound.push(item.job);
+      else missing.push(item.ingestionGroup);
+    }
+  }
+  logger.debug('jobs.listed', { catalog, schema, groups: ingestionGroups.length, jobs: jobsFound.length });
+  return { jobs: jobsFound, missing };
+}
 
 /**
  * Reads back the settings a group's job was generated from, so they can be exported and re-created elsewhere.

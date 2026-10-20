@@ -49,8 +49,10 @@ import {
   Loader2,
   PanelRightOpen,
   Play,
+  Plus,
   ScanSearch,
   Settings2,
+  Trash2,
   TriangleAlert,
   XCircle,
 } from 'lucide-react';
@@ -58,7 +60,7 @@ import type { QueryRegistry } from '@databricks/appkit-ui/react';
 import { api } from '../lib/api';
 import { jsonColumn } from '../lib/jsonColumn';
 import { reportError, useReportedFailure } from '../lib/logging';
-import type { Location, RowCheckJob, RowCheckMode, RowCheckRun } from '../types';
+import type { JobSchedule, Location, RowCheckJob, RowCheckMode, RowCheckRun, Schedule } from '../types';
 import { displayTime, formString, fqn, relativeTime } from '../utils';
 import { useControl } from '../lib/control';
 import { PageTitle, ErrorState, ScheduleFields, Toggle } from './shared';
@@ -66,11 +68,14 @@ import { RowCheckDailyChart } from './RowCheckDailyChart';
 import { JobComputeFields, NodeTypeOptions, RunAsFields } from './JobFields';
 import { computeFromForm, useNodeTypes } from '../lib/jobCompute';
 import type { ComputeMode, PerformanceTarget } from '../lib/jobCompute';
-import { RowCheckFilterBar } from './RowCheckFilters';
+import { FilterBar } from './FilterBar';
+import { Pagination } from './Pagination';
+import { RowCheckStatusMap } from './RowCheckStatusMap';
 import { useDailyRowCounts } from '../lib/dailyRowCounts';
 import type { DailyLevel } from '../lib/dailyRowCounts';
-import { MAX_PICKED, pickedTablesParam, tableKey, useDebounced } from '../lib/rowCheckFilters';
-import type { PickedTable } from '../lib/rowCheckFilters';
+import { MAX_PICKED, freeSlot, tableKey, usePageFilters } from '../lib/pageFilters';
+import type { PickedTable } from '../lib/pageFilters';
+import { usePagination } from '../lib/pagination';
 
 type RowCheckRow = QueryRegistry['row_check_results']['result'][number];
 
@@ -84,8 +89,7 @@ const count = (value: number | string | null | undefined) => (value == null ? '�
 const signed = (value: number | string | null | undefined) =>
   value == null ? '—' : `${Number(value) > 0 ? '+' : ''}${Number(value).toLocaleString()}`;
 const pollIntervalMs = 15_000;
-// Tables listed at a time; Show more adds as many again.
-const PAGE_SIZE = 100;
+type Pages = ReturnType<typeof usePagination>;
 type StatusFilter = '' | 'attention' | 'match' | 'unchecked';
 
 const statusStyles = {
@@ -163,20 +167,21 @@ function CheckError({ message }: { message: string | null }) {
 
 export function RowChecksPage() {
   const { location, revision, refresh } = useControl();
-  const [group, setGroup] = useState('');
-  const [searchInput, setSearchInput] = useState('');
-  const [picked, setPicked] = useState<PickedTable[]>([]);
+  const filters = usePageFilters();
+  const { group, search, picked, filtered } = filters;
   const [status, setStatus] = useState<StatusFilter>('');
-  const [pageSize, setPageSize] = useState(PAGE_SIZE);
-  const search = useDebounced(searchInput.trim());
-  const filters = useMemo(() => ({ group, search, picked }), [group, search, picked]);
-  const filtered = Boolean(group || search || picked.length);
+  // The group and table lists each page on their own; both start again when a filter or the status changes.
+  const tablePages = usePagination(`${filters.key}|${status}`);
+  const groupPages = usePagination(status);
+  // The group jobs page on their own, following the group and the picked tables.
+  const jobPages = usePagination(`${group}|${picked.map((item) => item.group).join(',')}`);
   // Nothing selected: a summary per group. A group or a name search: its tables. Picked tables: only those.
   const level: DailyLevel = filtered ? 'table' : 'group';
-  const [job, setJob] = useState<RowCheckJob | null>(null);
+  const [jobs, setJobs] = useState<RowCheckJob[]>([]);
   const [jobLoading, setJobLoading] = useState(true);
   const [jobError, setJobError] = useState<string | null>(null);
-  const [setupOpen, setSetupOpen] = useState(false);
+  // The job being edited, 'new' for a new one, or null when the dialog is closed.
+  const [editing, setEditing] = useState<RowCheckJob | 'new' | null>(null);
   const [details, setDetails] = useState<RowCheckRow | null>(null);
   const [detailedFor, setDetailedFor] = useState<RowCheckRow | null>(null);
   const [starting, setStarting] = useState<string | null>(null);
@@ -186,16 +191,14 @@ export function RowChecksPage() {
     () => ({
       config_table: sql.string(fqn(location, 'jdbc_ingestion_config')),
       row_check_table: sql.string(fqn(location, '_watersync_row_checks')),
-      ingestion_group: sql.string(group),
-      search: sql.string(search),
-      tables: sql.string(pickedTablesParam(picked)),
+      ...filters.params,
       refresh_token: sql.int(revision),
     }),
-    [location, group, search, picked, revision]
+    [location, filters.params, revision]
   );
   const params = useMemo(
-    () => ({ ...filterParams, status: sql.string(status), page_size: sql.int(pageSize) }),
-    [filterParams, status, pageSize]
+    () => ({ ...filterParams, status: sql.string(status), ...tablePages.params }),
+    [filterParams, status, tablePages.params]
   );
   const { data, loading, error } = useAnalyticsQuery('row_check_results', params, { autoStart: level === 'table' });
   useReportedFailure('query.row_check_results', error, { ...location, group, search, status });
@@ -205,10 +208,10 @@ export function RowChecksPage() {
       config_table: filterParams.config_table,
       row_check_table: filterParams.row_check_table,
       status: sql.string(status),
-      page_size: sql.int(pageSize),
+      ...groupPages.params,
       refresh_token: filterParams.refresh_token,
     }),
-    [filterParams, status, pageSize]
+    [filterParams, status, groupPages.params]
   );
   const {
     data: groupRows,
@@ -223,11 +226,11 @@ export function RowChecksPage() {
   const loadJob = useCallback(async () => {
     try {
       const query = new URLSearchParams(location).toString();
-      const result = await api<{ job: RowCheckJob | null }>(`/api/row-checks/job?${query}`);
-      setJob(result.job);
+      const result = await api<{ jobs: RowCheckJob[] }>(`/api/row-checks/jobs?${query}`);
+      setJobs(result.jobs);
       setJobError(null);
     } catch (x) {
-      setJobError(reportError('row_checks.job_read', x, location));
+      setJobError(reportError('row_checks.jobs_read', x, location));
     } finally {
       setJobLoading(false);
     }
@@ -237,8 +240,17 @@ export function RowChecksPage() {
     void loadJob();
   }, [loadJob, revision]);
 
-  // While a check is running, poll the job and reload the results once the run ends.
-  const activeRuns = useMemo(() => job?.runs.filter(isActive) ?? [], [job]);
+  // While a check is running, poll the jobs and reload the results once the run ends.
+  const runs = useMemo(
+    () => jobs.flatMap((job) => job.runs).sort((a, b) => (b.startTime ?? 0) - (a.startTime ?? 0)),
+    [jobs]
+  );
+  const activeRuns = useMemo(() => runs.filter(isActive), [runs]);
+  // A check runs on any row check job of the location, or of the checked group.
+  const canRun = (ingestionGroup: string) =>
+    jobs.some((job) => !job.ingestionGroup || (ingestionGroup && job.ingestionGroup === ingestionGroup));
+  // "Run basic check" covers the group the page is filtered to, else every table.
+  const runGroup = group && !picked.length && !search ? group : '';
   const previousActive = useRef(0);
   useEffect(() => {
     if (previousActive.current > activeRuns.length) refresh();
@@ -250,6 +262,7 @@ export function RowChecksPage() {
 
   const start = async (checkMode: RowCheckMode, row?: RowCheckRow, range: RowCheckRange = noRange) => {
     const key = row ? `${row.ingestion_group}/${row.source_table_name}` : checkMode;
+    const ingestionGroup = row?.ingestion_group ?? runGroup;
     setStarting(key);
     setRunError(null);
     try {
@@ -258,7 +271,7 @@ export function RowChecksPage() {
         body: JSON.stringify({
           ...location,
           checkMode,
-          ingestionGroup: row?.ingestion_group ?? '',
+          ingestionGroup,
           sourceTableName: row?.source_table_name ?? '',
           ...range,
         }),
@@ -266,7 +279,12 @@ export function RowChecksPage() {
       await loadJob();
     } catch (x) {
       setRunError(
-        reportError('row_checks.run', x, { ...location, checkMode, sourceTableName: row?.source_table_name })
+        reportError('row_checks.run', x, {
+          ...location,
+          checkMode,
+          ingestionGroup,
+          sourceTableName: row?.source_table_name,
+        })
       );
     } finally {
       setStarting(null);
@@ -285,61 +303,57 @@ export function RowChecksPage() {
     };
   }, [summaryRows]);
 
-  // Every filter change starts the table again from its first page.
-  const changeGroup = (next: string) => {
-    setGroup(next);
-    setPageSize(PAGE_SIZE);
-    // Tables of other groups would match nothing once the group is narrowed.
-    if (next) setPicked((current) => current.filter((item) => item.group === next));
+  // Keep the color the table has in the chart when that slot is free, else take the lowest free slot, so
+  // picking a table does not repaint it and tables already picked keep their colors.
+  const slotFor = (key: string, current: PickedTable[]) => {
+    const shown = chart.series.findIndex((item) => item.key === key);
+    const onScreen = shown >= 0 && shown < MAX_PICKED && !current.length ? shown : -1;
+    return onScreen >= 0 && !current.some((item) => item.slot === onScreen) ? onScreen : freeSlot(current);
   };
-  const changeSearch = (value: string) => {
-    setSearchInput(value);
-    setPageSize(PAGE_SIZE);
-  };
-  const toggleTable = (tableGroup: string, table: string) => {
-    setPageSize(PAGE_SIZE);
-    setPicked((current) => {
-      const key = tableKey(tableGroup, table);
-      if (current.some((item) => tableKey(item.group, item.table) === key)) {
-        return current.filter((item) => tableKey(item.group, item.table) !== key);
-      }
-      if (current.length >= MAX_PICKED) return current;
-      // Keep the color the table has in the chart when that slot is free, else take the lowest free slot, so
-      // picking a table does not repaint it and tables already picked keep their colors.
-      const used = new Set(current.map((item) => item.slot));
-      const shown = chart.series.findIndex((item) => item.key === key);
-      const onScreen = shown >= 0 && shown < MAX_PICKED && !current.length ? shown : -1;
-      const slot =
-        onScreen >= 0 && !used.has(onScreen)
-          ? onScreen
-          : ([...Array(MAX_PICKED).keys()].find((index) => !used.has(index)) ?? 0);
-      return [...current, { group: tableGroup, table, slot }];
-    });
-  };
-  const clearFilters = () => {
-    setGroup('');
-    setSearchInput('');
-    setPicked([]);
-    setPageSize(PAGE_SIZE);
+  const toggleTable = (tableGroup: string, table: string) =>
+    filters.toggle(tableGroup, table, slotFor(tableKey(tableGroup, table), picked));
+  // A status map square: show only that table, with any status, and scroll to its row. Clicking the only
+  // picked table again shows every table.
+  const focusTable = (tableGroup: string, table: string) => {
+    const only = picked.length === 1 && tableKey(picked[0].group, picked[0].table) === tableKey(tableGroup, table);
+    setStatus('');
+    filters.pickOnly(tableGroup, table, slotFor(tableKey(tableGroup, table), []));
+    if (!only) {
+      // After the page re-renders with the table list.
+      window.requestAnimationFrame(() =>
+        document.getElementById('row-check-list')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      );
+    }
   };
 
   return (
     <>
       <PageTitle
         title="Source and target row checks"
-        description="Compare each enabled source table with its target. Basic checks compare row counts and run on the job schedule; detailed checks compare per-chunk sums and hashes, then the rows of the chunks that differ, and are started here."
+        description="Compare each enabled source table with its target. Basic checks compare row counts; detailed checks compare per-chunk sums and hashes, then the rows of the chunks that differ. Row check jobs run them on a schedule, for the whole location or one group, and any check can be started here."
         action={
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={() => setSetupOpen(true)} disabled={jobLoading}>
-              <Settings2 className="mr-2 h-4 w-4" />
-              {job ? 'Job settings' : 'Set up job'}
+            <Button variant="outline" onClick={() => setEditing('new')} disabled={jobLoading}>
+              <Plus className="mr-2 h-4 w-4" />
+              New row check job
             </Button>
             <Button
               onClick={() => void start('basic')}
               disabled={
-                !job || starting !== null || activeRuns.some((run) => run.checkMode === 'basic' && !run.sourceTableName)
+                !canRun(runGroup) ||
+                starting !== null ||
+                activeRuns.some(
+                  (run) =>
+                    run.checkMode === 'basic' &&
+                    !run.sourceTableName &&
+                    (!run.ingestionGroup || run.ingestionGroup === runGroup)
+                )
               }
-              title="Count the rows of every enabled table now"
+              title={
+                canRun(runGroup)
+                  ? `Count the rows of every enabled table${runGroup ? ` of ${runGroup}` : ''} now`
+                  : `Create a row check job for this location${runGroup ? ` or for ${runGroup}` : ''} first`
+              }
             >
               <Play className="mr-2 h-4 w-4" />
               {starting === 'basic' ? 'Starting…' : 'Run basic check'}
@@ -349,32 +363,38 @@ export function RowChecksPage() {
       />
       {jobError && <ErrorState message={jobError} />}
       {runError && <ErrorState message={runError} />}
-      {!jobLoading && !job && !jobError && (
-        <Alert className="mb-6">
-          <ScanSearch className="h-4 w-4" />
-          <AlertTitle>No row check job for this location yet</AlertTitle>
-          <AlertDescription>
-            Set up the job to run the basic check every day and to start detailed checks from this page.
-          </AlertDescription>
-        </Alert>
-      )}
-      <RowCheckFilterBar
+      <FilterBar
+        location={location}
+        revision={revision}
+        filters={filters}
+        onToggle={toggleTable}
+        colors={chart.colors}
+        enabledOnly
+        pickNote=" (one chart color each)"
+        onRefresh={refresh}
+      />
+      <RowCheckJobsCard
+        jobs={jobs}
+        loading={jobLoading}
+        location={location}
+        group={group}
+        picked={picked}
+        pages={jobPages}
+        onEdit={setEditing}
+        onChanged={() => void loadJob()}
+      />
+      <SummaryStrip summary={summary} jobs={jobs} loading={summaryLoading} filtered={filtered} />
+      <RowCheckStatusMap
         location={location}
         revision={revision}
         group={group}
-        onGroupChange={changeGroup}
-        searchInput={searchInput}
-        onSearchInputChange={changeSearch}
+        search={search}
         picked={picked}
-        onToggle={toggleTable}
-        onClear={clearFilters}
-        colors={chart.colors}
-        onRefresh={refresh}
+        onSelect={focusTable}
       />
-      <SummaryStrip summary={summary} job={job} loading={summaryLoading} filtered={filtered} />
       <RowCheckDailyChart chart={chart} picked={picked.length} filtered={filtered} />
-      {job && <RunStrip job={job} activeRuns={activeRuns} />}
-      <div className="mb-3 flex flex-wrap items-center gap-3">
+      {jobs.length > 0 && <RunStrip runs={runs} activeRuns={activeRuns} />}
+      <div id="row-check-list" className="mb-3 flex scroll-mt-4 flex-wrap items-center gap-3">
         {level === 'group' ? (
           <h2 className="text-base font-semibold">Groups</h2>
         ) : group && !picked.length && !search ? (
@@ -382,7 +402,7 @@ export function RowChecksPage() {
             <button
               type="button"
               className="font-normal text-muted-foreground hover:text-foreground hover:underline"
-              onClick={() => changeGroup('')}
+              onClick={() => filters.setGroup('')}
             >
               All groups
             </button>
@@ -394,10 +414,7 @@ export function RowChecksPage() {
         )}
         <Select
           value={status || 'all'}
-          onValueChange={(value) => {
-            setStatus(value === 'all' ? '' : (value as StatusFilter));
-            setPageSize(PAGE_SIZE);
-          }}
+          onValueChange={(value) => setStatus(value === 'all' ? '' : (value as StatusFilter))}
         >
           <SelectTrigger className="h-8 w-48" aria-label="Status">
             <SelectValue />
@@ -409,21 +426,9 @@ export function RowChecksPage() {
             <SelectItem value="unchecked">Not checked</SelectItem>
           </SelectContent>
         </Select>
-        {level === 'group' && !groupsLoading && groupRows && groupRows.length > 0 && (
-          <span className="text-xs text-muted-foreground">
-            {groupRows.length < groupCount
-              ? `Showing ${groupRows.length.toLocaleString()} of ${groupCount.toLocaleString()} groups, problems first`
-              : `${groupCount.toLocaleString()} ${groupCount === 1 ? 'group' : 'groups'}, problems first`}{' '}
-            · open a group to see its tables
-          </span>
-        )}
-        {level === 'table' && !loading && data && data.length > 0 && (
-          <span className="text-xs text-muted-foreground">
-            {data.length < totalCount
-              ? `Showing ${data.length.toLocaleString()} of ${totalCount.toLocaleString()} tables, problems first`
-              : `${totalCount.toLocaleString()} ${totalCount === 1 ? 'table' : 'tables'}, problems first`}
-          </span>
-        )}
+        <span className="text-xs text-muted-foreground">
+          Problems first{level === 'group' && ' · open a group to see its tables'}
+        </span>
       </div>
       {level === 'group' ? (
         <GroupsTable
@@ -432,9 +437,9 @@ export function RowChecksPage() {
           error={groupsError}
           total={groupCount}
           filteredByStatus={Boolean(status)}
-          onOpen={changeGroup}
+          onOpen={filters.setGroup}
           onClearStatus={() => setStatus('')}
-          onShowMore={() => setPageSize((size) => size + PAGE_SIZE)}
+          pages={groupPages}
         />
       ) : loading ? (
         <Skeleton className="h-80" />
@@ -455,7 +460,7 @@ export function RowChecksPage() {
               variant="outline"
               size="sm"
               onClick={() => {
-                clearFilters();
+                filters.clear();
                 setStatus('');
               }}
             >
@@ -464,7 +469,7 @@ export function RowChecksPage() {
           )}
         </Empty>
       ) : (
-        <Card className="overflow-hidden">
+        <Card className="gap-0 overflow-hidden py-0">
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
@@ -544,11 +549,11 @@ export function RowChecksPage() {
                           size="sm"
                           variant="outline"
                           onClick={() => setDetailedFor(row)}
-                          disabled={!job || starting !== null || detailedRunning}
+                          disabled={!canRun(row.ingestion_group) || starting !== null || detailedRunning}
                           title={
-                            job
+                            canRun(row.ingestion_group)
                               ? 'Compare chunk aggregates, then the rows of the chunks that differ'
-                              : 'Set up the row check job first'
+                              : `Create a row check job for this location or for ${row.ingestion_group} first`
                           }
                         >
                           <ScanSearch className="mr-1.5 h-3.5 w-3.5" />
@@ -571,22 +576,24 @@ export function RowChecksPage() {
               })}
             </TableBody>
           </Table>
-          {data.length < totalCount && (
-            <div className="flex justify-center border-t p-3">
-              <Button variant="outline" size="sm" onClick={() => setPageSize((size) => size + PAGE_SIZE)}>
-                Show {Math.min(PAGE_SIZE, totalCount - data.length).toLocaleString()} more
-              </Button>
-            </div>
-          )}
+          <Pagination
+            total={totalCount}
+            page={tablePages.page}
+            pageSize={tablePages.pageSize}
+            onPageChange={tablePages.setPage}
+            onPageSizeChange={tablePages.setPageSize}
+            noun="tables"
+          />
         </Card>
       )}
       <RowCheckJobDialog
-        open={setupOpen}
-        job={job}
+        editing={editing}
+        jobs={jobs}
         location={location}
-        onClose={() => setSetupOpen(false)}
+        revision={revision}
+        onClose={() => setEditing(null)}
         onSaved={() => {
-          setSetupOpen(false);
+          setEditing(null);
           void loadJob();
         }}
       />
@@ -615,7 +622,7 @@ function GroupsTable({
   filteredByStatus,
   onOpen,
   onClearStatus,
-  onShowMore,
+  pages,
 }: {
   rows: GroupRow[] | null;
   loading: boolean;
@@ -624,7 +631,7 @@ function GroupsTable({
   filteredByStatus: boolean;
   onOpen: (group: string) => void;
   onClearStatus: () => void;
-  onShowMore: () => void;
+  pages: Pages;
 }) {
   if (loading) return <Skeleton className="h-60" />;
   if (error) return <ErrorState message={error} />;
@@ -648,7 +655,7 @@ function GroupsTable({
     );
   }
   return (
-    <Card className="overflow-hidden">
+    <Card className="gap-0 overflow-hidden py-0">
       <Table>
         <TableHeader>
           <TableRow className="hover:bg-transparent">
@@ -722,13 +729,14 @@ function GroupsTable({
           })}
         </TableBody>
       </Table>
-      {rows.length < total && (
-        <div className="flex justify-center border-t p-3">
-          <Button variant="outline" size="sm" onClick={onShowMore}>
-            Show {Math.min(PAGE_SIZE, total - rows.length).toLocaleString()} more
-          </Button>
-        </div>
-      )}
+      <Pagination
+        total={total}
+        page={pages.page}
+        pageSize={pages.pageSize}
+        onPageChange={pages.setPage}
+        onPageSizeChange={pages.setPageSize}
+        noun="groups"
+      />
     </Card>
   );
 }
@@ -794,7 +802,9 @@ function DetailedCheckDialog({
                 />
                 <p className="text-xs text-muted-foreground">
                   Leave empty to use the chunk column: the integer partition column or key, else the timestamp watermark
-                  column.
+                  column. A date, timestamp or days-back range goes on the timestamp watermark column; on an EPIC CSA
+                  table it checks the rows whose key changed in the range, as long as the CSA change table still keeps
+                  those changes.
                 </p>
               </div>
               <div className="space-y-2">
@@ -839,17 +849,17 @@ type Summary = {
 /** The latest basic check across the listed tables, in one line. */
 function SummaryStrip({
   summary,
-  job,
+  jobs,
   loading,
   filtered,
 }: {
   summary: Summary;
-  job: RowCheckJob | null;
+  jobs: RowCheckJob[];
   loading: boolean;
   filtered: boolean;
 }) {
   if (loading) return <Skeleton className="mb-6 h-12" />;
-  const schedule = job?.schedule;
+  const scheduled = jobs.filter((job) => job.schedule.enabled && job.schedule.pauseStatus === 'UNPAUSED').length;
   const items = [
     { Icon: CheckCircle2, value: summary.match, label: 'match', tone: 'text-success' },
     { Icon: XCircle, value: summary.mismatch, label: 'differ', tone: summary.mismatch ? 'text-destructive' : '' },
@@ -882,114 +892,352 @@ function SummaryStrip({
           Last check {relativeTime(summary.lastCheck)}
         </span>
         <span>
-          {schedule
-            ? `${schedule.pause_status === 'PAUSED' ? 'Paused · ' : ''}Schedule ${schedule.quartz_cron_expression} (${schedule.timezone_id})`
-            : 'Not scheduled'}
+          {scheduled
+            ? `${scheduled} scheduled row check ${scheduled === 1 ? 'job' : 'jobs'}`
+            : 'No scheduled row check job'}
         </span>
       </span>
     </div>
   );
 }
 
-function RunStrip({ job, activeRuns }: { job: RowCheckJob; activeRuns: RowCheckRun[] }) {
-  const runs = job.runs.slice(0, 5);
+/** A schedule in one line: its cron and time zone, paused, or manual only. */
+const scheduleLabel = (schedule: Schedule) =>
+  !schedule.enabled
+    ? 'Manual only'
+    : `${schedule.pauseStatus === 'PAUSED' ? 'Paused · ' : ''}${schedule.quartzCronExpression} (${schedule.timezoneId})`;
+
+function RunState({ run }: { run: RowCheckRun }) {
+  const state = run.resultState ?? run.lifeCycleState ?? 'UNKNOWN';
+  return (
+    // The default Badge is the brand red, which would make a successful run look failed.
+    <span
+      className={`check-status ${
+        state === 'SUCCESS' ? 'check-status-match' : isActive(run) ? 'check-status-running' : 'check-status-mismatch'
+      }`}
+      title={run.stateMessage ?? ''}
+    >
+      {isActive(run) && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
+      {state.charAt(0) + state.slice(1).toLowerCase().replace(/_/g, ' ')}
+    </span>
+  );
+}
+
+/** The row check jobs of the location and of its groups, with what each checks and when. */
+function RowCheckJobsCard({
+  jobs,
+  loading,
+  location,
+  group,
+  picked,
+  pages,
+  onEdit,
+  onChanged,
+}: {
+  jobs: RowCheckJob[];
+  loading: boolean;
+  location: Location;
+  /** The page filters: a group's jobs show when it is the filtered group or holds a picked table. */
+  group: string;
+  picked: PickedTable[];
+  pages: Pages;
+  onEdit: (job: RowCheckJob | 'new') => void;
+  /** After a job was run or deleted, to reload the jobs (and poll while the run is going). */
+  onChanged: () => void;
+}) {
+  const [deleting, setDeleting] = useState<number | null>(null);
+  const [running, setRunning] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const run = async (job: RowCheckJob) => {
+    setRunning(job.jobId);
+    setError(null);
+    try {
+      await api('/api/row-checks/job/run', {
+        method: 'POST',
+        body: JSON.stringify({ ...location, ingestionGroup: job.ingestionGroup, checkMode: job.checkMode }),
+      });
+      onChanged();
+    } catch (x) {
+      setError(reportError('row_checks.job_run', x, { ...location, jobId: job.jobId }));
+    } finally {
+      setRunning(null);
+    }
+  };
+  const remove = async (job: RowCheckJob) => {
+    if (!window.confirm(`Delete the job "${job.name}" and its run history? Check results stay on this page.`)) return;
+    setDeleting(job.jobId);
+    setError(null);
+    try {
+      const query = new URLSearchParams({ ...location, ingestionGroup: job.ingestionGroup, checkMode: job.checkMode });
+      await api(`/api/row-checks/job?${query.toString()}`, { method: 'DELETE' });
+      onChanged();
+    } catch (x) {
+      setError(reportError('row_checks.job_delete', x, { ...location, jobId: job.jobId }));
+    } finally {
+      setDeleting(null);
+    }
+  };
+  // Jobs of every group always show, first; the group jobs follow the filters and page.
+  const groups = picked.length ? new Set(picked.map((item) => item.group)) : group ? new Set([group]) : null;
+  const locationJobs = jobs.filter((job) => !job.ingestionGroup);
+  const groupJobs = jobs.filter((job) => job.ingestionGroup && (!groups || groups.has(job.ingestionGroup)));
+  const shown = [...locationJobs, ...groupJobs.slice(pages.page * pages.pageSize, (pages.page + 1) * pages.pageSize)];
+  if (loading) return <Skeleton className="mb-6 h-32" />;
+  return (
+    <Card className="mb-6 gap-0 overflow-hidden py-0">
+      <CardHeader className="py-4">
+        <CardTitle className="text-base">Row check jobs</CardTitle>
+        <CardDescription>
+          Each job runs a basic or a detailed check of every enabled table, for the whole location or one group, and
+          writes to <span className="font-mono">{fqn(location, '_watersync_row_checks')}</span>. Jobs of every group
+          always show; group jobs follow the group filter and the groups of the picked tables.
+        </CardDescription>
+      </CardHeader>
+      {error && (
+        <div className="px-6 pb-4">
+          <ErrorState message={error} />
+        </div>
+      )}
+      {!jobs.length ? (
+        <Empty className="border-t">
+          <EmptyHeader>
+            <EmptyTitle>No row check job yet</EmptyTitle>
+            <EmptyDescription>
+              Create one to check the tables on a schedule and to start checks from this page.
+            </EmptyDescription>
+          </EmptyHeader>
+          <Button size="sm" onClick={() => onEdit('new')}>
+            <Plus className="mr-2 h-4 w-4" />
+            New row check job
+          </Button>
+        </Empty>
+      ) : (
+        <Table className="border-t">
+          <TableHeader>
+            <TableRow className="hover:bg-transparent">
+              <TableHead>Job</TableHead>
+              <TableHead>Checks</TableHead>
+              <TableHead>Schedule</TableHead>
+              <TableHead>Compute</TableHead>
+              <TableHead>Latest run</TableHead>
+              <TableHead>
+                <span className="sr-only">Actions</span>
+              </TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {!shown.length && (
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={6} className="py-6 text-center text-sm text-muted-foreground">
+                  No row check job for the filtered groups.
+                </TableCell>
+              </TableRow>
+            )}
+            {shown.map((job) => {
+              const latest = job.runs[0];
+              const active = job.runs.some(isActive);
+              return (
+                <TableRow key={job.jobId}>
+                  <TableCell className="max-w-80">
+                    <a
+                      href={job.workspaceUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex items-center gap-1 truncate font-medium hover:underline"
+                      title={`Open job ${job.jobId} in Databricks`}
+                    >
+                      {job.name}
+                      <ExternalLink className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                    </a>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="font-medium capitalize">{job.checkMode}</span>
+                      {job.ingestionGroup ? (
+                        <Badge variant="outline" className="font-normal text-muted-foreground">
+                          {job.ingestionGroup}
+                        </Badge>
+                      ) : (
+                        <span className="text-muted-foreground">all groups</span>
+                      )}
+                    </div>
+                    {job.checkMode === 'detailed' && (
+                      <div className="text-xs text-muted-foreground">
+                        {job.rangeFrom ? `Rows from ${job.rangeFrom}` : 'Every row'}
+                      </div>
+                    )}
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">{scheduleLabel(job.schedule)}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
+                    {job.compute.mode === 'SERVERLESS' ? 'Serverless' : 'Job cluster'}
+                  </TableCell>
+                  <TableCell>
+                    {latest ? (
+                      <a
+                        href={latest.runUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex flex-col items-start gap-1 text-xs hover:underline"
+                      >
+                        <RunState run={latest} />
+                        <span className="text-muted-foreground">{displayTime(latest.startTime)}</span>
+                      </a>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">Not run yet</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex justify-end gap-1">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => void run(job)}
+                        disabled={running !== null || active}
+                        title={
+                          active
+                            ? 'The job is already running'
+                            : `Run the ${job.checkMode} check of ${job.ingestionGroup || 'every group'} now, with the job's settings`
+                        }
+                      >
+                        {running === job.jobId || active ? (
+                          <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Play className="mr-1.5 h-3.5 w-3.5" />
+                        )}
+                        {running === job.jobId ? 'Starting…' : active ? 'Running' : 'Run now'}
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => onEdit(job)}>
+                        <Settings2 className="mr-1.5 h-3.5 w-3.5" />
+                        Edit
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => void remove(job)}
+                        disabled={deleting !== null}
+                        aria-label={`Delete ${job.name}`}
+                        title="Delete job"
+                      >
+                        {deleting === job.jobId ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Trash2 className="h-4 w-4" />
+                        )}
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      )}
+      {groupJobs.length > 0 && (
+        <Pagination
+          total={groupJobs.length}
+          page={pages.page}
+          pageSize={pages.pageSize}
+          onPageChange={pages.setPage}
+          onPageSizeChange={pages.setPageSize}
+          noun="group jobs"
+        />
+      )}
+    </Card>
+  );
+}
+
+/** The latest runs of every row check job, newest first. */
+function RunStrip({ runs, activeRuns }: { runs: RowCheckRun[]; activeRuns: RowCheckRun[] }) {
+  const recent = runs.slice(0, 6);
   return (
     <Card className="mb-6">
       <CardHeader className="pb-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <CardTitle className="text-base">Recent check runs</CardTitle>
-            <CardDescription>
-              {activeRuns.length
-                ? `${activeRuns.length} running · this page updates when they finish`
-                : 'Results appear in the table below when a run finishes.'}
-            </CardDescription>
-          </div>
-          <Button asChild variant="ghost" size="sm">
-            <a href={job.workspaceUrl} target="_blank" rel="noreferrer">
-              Open job <ExternalLink className="ml-1 h-3.5 w-3.5" />
-            </a>
-          </Button>
-        </div>
+        <CardTitle className="text-base">Recent check runs</CardTitle>
+        <CardDescription>
+          {activeRuns.length
+            ? `${activeRuns.length} running · this page updates when they finish`
+            : 'Results appear in the table below when a run finishes.'}
+        </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-wrap gap-2">
-        {runs.length === 0 ? (
-          <span className="text-sm text-muted-foreground">The job has not run yet.</span>
+        {recent.length === 0 ? (
+          <span className="text-sm text-muted-foreground">No row check job has run yet.</span>
         ) : (
-          runs.map((run) => {
-            const state = run.resultState ?? run.lifeCycleState ?? 'UNKNOWN';
-            return (
-              <a
-                key={run.runId}
-                href={run.runUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs hover:bg-muted"
-                title={run.stateMessage ?? ''}
-              >
-                {/* The default Badge is the brand red, which would make a successful run look failed. */}
-                <span
-                  className={`check-status ${
-                    state === 'SUCCESS'
-                      ? 'check-status-match'
-                      : isActive(run)
-                        ? 'check-status-running'
-                        : 'check-status-mismatch'
-                  }`}
-                >
-                  {isActive(run) && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
-                  {state.charAt(0) + state.slice(1).toLowerCase().replace(/_/g, ' ')}
-                </span>
-                <span className="font-medium">{run.checkMode}</span>
-                <span className="font-mono text-muted-foreground">
-                  {run.sourceTableName || run.ingestionGroup || 'all tables'}
-                  {(run.rangeFrom || run.rangeTo) &&
-                    ` · ${run.rangeColumn || 'chunk column'} ${[run.rangeFrom && `>= ${run.rangeFrom}`, run.rangeTo && `< ${run.rangeTo}`].filter(Boolean).join(' and ')}`}
-                </span>
-                <span className="text-muted-foreground">{displayTime(run.startTime)}</span>
-              </a>
-            );
-          })
+          recent.map((run) => (
+            <a
+              key={`${run.jobId}/${run.runId}`}
+              href={run.runUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs hover:bg-muted"
+              title={run.stateMessage ?? ''}
+            >
+              <RunState run={run} />
+              <span className="font-medium">{run.checkMode}</span>
+              <span className="font-mono text-muted-foreground">
+                {run.sourceTableName || run.ingestionGroup || 'all tables'}
+                {(run.rangeFrom || run.rangeTo) &&
+                  ` · ${run.rangeColumn || 'chunk column'} ${[run.rangeFrom && `>= ${run.rangeFrom}`, run.rangeTo && `< ${run.rangeTo}`].filter(Boolean).join(' and ')}`}
+              </span>
+              <span className="text-muted-foreground">{displayTime(run.startTime)}</span>
+            </a>
+          ))
         )}
       </CardContent>
     </Card>
   );
 }
 
+// A date, a timestamp or days back (-30d), as opposed to a number: see is_time_bound in row_check_sql.py.
+const isTimeBound = (value: string) => value.trim() !== '' && !/^-?\d+(\.\d+)?$/.test(value.trim());
+
+// A new job's schedule: the basic check daily, the detailed check weekly, since it reads much more.
+const defaultSchedules: Record<RowCheckMode, JobSchedule> = {
+  basic: { quartz_cron_expression: '0 0 6 * * ?', timezone_id: 'UTC' },
+  detailed: { quartz_cron_expression: '0 0 7 ? * SUN', timezone_id: 'UTC' },
+};
+const scopeLabel = (location: Location, ingestionGroup: string) =>
+  ingestionGroup ? `the ${ingestionGroup} group` : `every group of ${location.catalog}.${location.schema}`;
+const jobNameOf = (location: Location, ingestionGroup: string, mode: RowCheckMode) =>
+  ingestionGroup
+    ? `[${ingestionGroup}] Row Check (${mode})`
+    : `[${location.catalog}.${location.schema}] Row Checks${mode === 'detailed' ? ' (detailed)' : ''}`;
+
 function RowCheckJobDialog({
-  open,
-  job,
+  editing,
+  jobs,
   location,
+  revision,
   onClose,
   onSaved,
 }: {
-  open: boolean;
-  job: RowCheckJob | null;
+  editing: RowCheckJob | 'new' | null;
+  jobs: RowCheckJob[];
   location: Location;
+  revision: number;
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const job = editing === 'new' ? null : editing;
   return (
-    <Dialog open={open} onOpenChange={(value) => !value && onClose()}>
+    <Dialog open={editing !== null} onOpenChange={(value) => !value && onClose()}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
         <DialogHeader>
-          <DialogTitle>{job ? 'Row check job settings' : 'Set up the row check job'}</DialogTitle>
+          <DialogTitle>{job ? `Edit ${job.name}` : 'New row check job'}</DialogTitle>
           <DialogDescription>
-            One job,{' '}
-            <span className="font-mono">
-              [{location.catalog}.{location.schema}] Row Checks
-            </span>
-            , checks every enabled table at this location and writes to{' '}
-            <span className="font-mono">{fqn(location, '_watersync_row_checks')}</span>. It offers the same compute and
-            identity options as an ingestion job.
+            A job runs one check, basic or detailed, over every enabled table of the location or of one group, and
+            writes to <span className="font-mono">{fqn(location, '_watersync_row_checks')}</span>. It offers the same
+            compute and identity options as an ingestion job.
           </DialogDescription>
         </DialogHeader>
         {/* Remounted on every open, so the fields start from the job's current settings. */}
-        {open && (
+        {editing !== null && (
           <RowCheckJobForm
             key={job?.jobId ?? 'new'}
             job={job}
+            jobs={jobs}
             location={location}
+            revision={revision}
             onClose={onClose}
             onSaved={onSaved}
           />
@@ -1001,28 +1249,49 @@ function RowCheckJobDialog({
 
 function RowCheckJobForm({
   job,
+  jobs,
   location,
+  revision,
   onClose,
   onSaved,
 }: {
   job: RowCheckJob | null;
+  jobs: RowCheckJob[];
   location: Location;
+  revision: number;
   onClose: () => void;
   onSaved: () => void;
 }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [tab, setTab] = useState('source');
-  // A new job is scheduled daily on serverless as the app; an existing one keeps what the Databricks API reports.
-  const [scheduleEnabled, setScheduleEnabled] = useState(job ? Boolean(job.schedule) : true);
-  const [scheduleActive, setScheduleActive] = useState(job?.schedule?.pause_status !== 'PAUSED');
+  const [tab, setTab] = useState('check');
+  // The scope and mode name the job, so they are fixed once it exists.
+  const [ingestionGroup, setIngestionGroup] = useState(job?.ingestionGroup ?? '');
+  const [checkMode, setCheckMode] = useState<RowCheckMode>(job?.checkMode ?? 'basic');
+  const [rangeFrom, setRangeFrom] = useState(job?.rangeFrom ?? '');
+  // A new job is scheduled on serverless as the app; an existing one keeps what the Databricks API reports.
+  const [scheduleEnabled, setScheduleEnabled] = useState(job ? job.schedule.enabled : true);
+  const [scheduleActive, setScheduleActive] = useState(job?.schedule.pauseStatus !== 'PAUSED');
   const [computeMode, setComputeMode] = useState<ComputeMode>(job?.compute.mode ?? 'SERVERLESS');
   const [performanceTarget, setPerformanceTarget] = useState<PerformanceTarget>(
     job?.compute.performanceTarget ?? 'STANDARD'
   );
   const [runAsMode, setRunAsMode] = useState<string>(job?.runAs.mode ?? 'DEFAULT');
   const nodeTypes = useNodeTypes(computeMode === 'JOB_CLUSTER');
-  const schedule = job?.schedule ?? { quartz_cron_expression: '0 0 6 * * ?', timezone_id: 'UTC' };
+  const groupParams = useMemo(
+    () => ({ table_name: sql.string(fqn(location, 'jdbc_ingestion_config')), refresh_token: sql.int(revision) }),
+    [location, revision]
+  );
+  const { data: groups, loading: groupsLoading } = useAnalyticsQuery('ingestion_groups', groupParams, {
+    autoStart: !job,
+  });
+  // A new job for a scope and mode that already has one updates that job.
+  const existing = job
+    ? null
+    : jobs.find((item) => item.ingestionGroup === ingestionGroup && item.checkMode === checkMode);
+  const schedule = job
+    ? { quartz_cron_expression: job.schedule.quartzCronExpression, timezone_id: job.schedule.timezoneId }
+    : defaultSchedules[checkMode];
   // Inactive tabs are hidden, so the browser cannot focus an invalid field there and blocks the submit
   // silently. Reveal the tab holding the first invalid field and say what is missing.
   const revealInvalidField = (event: FormEvent<HTMLFormElement>) => {
@@ -1043,12 +1312,15 @@ function RowCheckJobForm({
         method: 'POST',
         body: JSON.stringify({
           ...location,
+          ingestionGroup,
+          checkMode,
+          rangeFrom: checkMode === 'detailed' ? rangeFrom.trim() : '',
           gitUrl: form.get('gitUrl'),
           gitBranch: form.get('gitBranch'),
           maxParallelTables: Number(form.get('maxParallelTables')),
           schedule: {
             enabled: scheduleEnabled,
-            quartzCronExpression: formString(form, 'quartzCronExpression', '0 0 6 * * ?'),
+            quartzCronExpression: formString(form, 'quartzCronExpression', schedule.quartz_cron_expression),
             timezoneId: formString(form, 'timezoneId', 'UTC'),
             pauseStatus: scheduleActive ? 'UNPAUSED' : 'PAUSED',
           },
@@ -1058,7 +1330,7 @@ function RowCheckJobForm({
       });
       onSaved();
     } catch (x) {
-      setError(reportError('row_checks.job_save', x, { ...location, computeMode }));
+      setError(reportError('row_checks.job_save', x, { ...location, ingestionGroup, checkMode, computeMode }));
     } finally {
       setBusy(false);
     }
@@ -1068,12 +1340,104 @@ function RowCheckJobForm({
       {error && <ErrorState message={error} />}
       <NodeTypeOptions nodeTypes={nodeTypes} />
       <Tabs value={tab} onValueChange={setTab} className="w-full">
-        <TabsList className="grid w-full grid-cols-4">
+        <TabsList className="flex h-auto w-full [&>button]:flex-auto [&>button]:px-3">
+          <TabsTrigger value="check">Check</TabsTrigger>
           <TabsTrigger value="source">Git source &amp; execution</TabsTrigger>
           <TabsTrigger value="compute">Job Compute</TabsTrigger>
           <TabsTrigger value="schedule">Schedule</TabsTrigger>
           <TabsTrigger value="run-as">Run as</TabsTrigger>
         </TabsList>
+        <TabsContent value="check" data-tab="check" forceMount className="mt-4 data-[state=inactive]:hidden">
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="row-check-scope">Tables</Label>
+              {groupsLoading ? (
+                <Skeleton className="h-9" />
+              ) : (
+                <Select
+                  value={ingestionGroup || 'all'}
+                  onValueChange={(value) => setIngestionGroup(value === 'all' ? '' : value)}
+                  disabled={Boolean(job)}
+                >
+                  <SelectTrigger id="row-check-scope" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Every group</SelectItem>
+                    {job?.ingestionGroup && <SelectItem value={job.ingestionGroup}>{job.ingestionGroup}</SelectItem>}
+                    {groups?.map((group) => (
+                      <SelectItem key={group.ingestion_group} value={group.ingestion_group}>
+                        {group.ingestion_group} {'·'} {group.enabled_source_count} enabled sources
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="row-check-mode">Check</Label>
+              <Select
+                value={checkMode}
+                onValueChange={(value) => setCheckMode(value as RowCheckMode)}
+                disabled={Boolean(job)}
+              >
+                <SelectTrigger id="row-check-mode" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="basic">Basic · row counts</SelectItem>
+                  <SelectItem value="detailed">Detailed · chunk aggregates, then rows</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <p className="text-xs text-muted-foreground md:col-span-2">
+              {checkMode === 'basic'
+                ? 'Compares the row counts of source and target. Cheap: one COUNT(*) per side and table.'
+                : 'Compares per-chunk aggregates, then the rows of the chunks that differ. Reads more; schedule it less often.'}{' '}
+              The job is <span className="font-mono">{jobNameOf(location, ingestionGroup, checkMode)}</span> and checks{' '}
+              {scopeLabel(location, ingestionGroup)}.
+            </p>
+            {checkMode === 'detailed' && (
+              <div className="space-y-2 md:col-span-2">
+                <Label htmlFor="row-check-range-from">Rows from (optional)</Label>
+                <Input
+                  id="row-check-range-from"
+                  name="rangeFrom"
+                  placeholder="-30d"
+                  value={rangeFrom}
+                  onChange={(event) => setRangeFrom(event.target.value)}
+                  pattern="^$|^-?\d+(\.\d+)?$|^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}:\d{2})?$|^-\d{1,5}d$"
+                  title="A number, a date (2026-09-01), a timestamp (2026-09-01 12:00:00) or days back (-30d)"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Empty checks every row. A date, a timestamp or days back (-30d) checks recent rows: for EPIC CSA
+                  tables, the rows whose key the CSA change table lists as changed since then; for other tables, the
+                  rows from then by the timestamp watermark column, or every row when the table has none. A number
+                  checks rows from that value of each table&apos;s integer chunk column.
+                </p>
+              </div>
+            )}
+            {checkMode === 'detailed' && isTimeBound(rangeFrom) && (
+              <Alert className="md:col-span-2">
+                <TriangleAlert className="h-4 w-4" />
+                <AlertTitle>Schedule this job more often than the CSA retention period</AlertTitle>
+                <AlertDescription>
+                  The CSA change tables keep changes only for their retention period, so EPIC CSA tables are checked
+                  only for changes still listed there. If the retention is 5 days and this job runs weekly, the changes
+                  of 2 days each week are never checked. Run it more often than the retention (for example every 4 days
+                  with -5d); results say when the change table no longer reached the start.
+                </AlertDescription>
+              </Alert>
+            )}
+            {existing && (
+              <Alert className="md:col-span-2">
+                <TriangleAlert className="h-4 w-4" />
+                <AlertTitle>This job already exists</AlertTitle>
+                <AlertDescription>Saving replaces the settings of {existing.name}.</AlertDescription>
+              </Alert>
+            )}
+          </div>
+        </TabsContent>
         <TabsContent value="source" data-tab="source" forceMount className="mt-4 data-[state=inactive]:hidden">
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2 md:col-span-2">
@@ -1116,7 +1480,9 @@ function RowCheckJobForm({
           />
         </TabsContent>
         <TabsContent value="schedule" data-tab="schedule" forceMount className="mt-4 data-[state=inactive]:hidden">
+          {/* Keyed by mode, so a new job's cron follows the check picked. */}
           <ScheduleFields
+            key={checkMode}
             enabled={scheduleEnabled}
             onEnabledChange={setScheduleEnabled}
             active={scheduleActive}
@@ -1124,7 +1490,7 @@ function RowCheckJobForm({
             schedule={schedule}
           />
           <p className="mt-3 text-xs text-muted-foreground">
-            The schedule runs the basic check. Detailed checks only run when started from this page.
+            Without a schedule the job only runs when a check is started from this page or with Run now.
           </p>
         </TabsContent>
         <TabsContent value="run-as" data-tab="run-as" forceMount className="mt-4 data-[state=inactive]:hidden">
@@ -1154,7 +1520,7 @@ function RowCheckJobForm({
           Cancel
         </Button>
         <Button type="submit" disabled={busy}>
-          {busy ? 'Saving…' : job ? 'Update job' : 'Create job'}
+          {busy ? 'Saving…' : job || existing ? 'Update job' : 'Create job'}
         </Button>
       </DialogFooter>
     </form>

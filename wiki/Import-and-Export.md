@@ -29,6 +29,7 @@ The script calls the deployed app, so validation, the config write, and job crea
 | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | Every row of `jdbc_ingestion_config` in the location                                           | Watermarks (`jdbc_ingestion_watermark`): runtime state                    |
 | Each group's job settings: Git source, parallelism, schedule, job compute, SDP compute, run as | Secret **values**: only secret scope/key and UC secret names are exported |
+| The [row check jobs](Row-Checks#row-check-jobs) of the location and of its groups (`rowCheckJobs`): check, group, range start, Git source, parallelism, schedule, job compute, run as | |
 |                                                                                                | Job run history, job IDs and permissions                                  |
 
 Job settings are **read back from the Databricks API** at export time, from the job named
@@ -81,6 +82,8 @@ Without `--output`, the file is written to stdout.
      provisioned in the source is provisioned again in the target; a pipeline that was supplied by ID keeps that
      ID (see [Limitations](#limitations)).
    - Groups are deployed one by one. A failing group is reported and does not stop the others.
+   - Then every row check job in the file is created or updated, matched by its name, as the **Row checks** page
+     does. A failing one is reported and does not stop the others.
 
 The location's metadata tables are created first if they do not exist, as when you select a location in the app.
 After the import, the first run of each table reads it in full because there is no watermark yet.

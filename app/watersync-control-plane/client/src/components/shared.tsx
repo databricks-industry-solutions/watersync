@@ -254,28 +254,37 @@ export function ScheduleFields({
   active,
   onActiveChange,
   schedule,
+  prefix = '',
+  title = 'Scheduled execution',
+  description = 'Run automatically using a Quartz cron schedule.',
 }: {
   enabled: boolean;
   onEnabledChange: (value: boolean) => void;
   active: boolean;
   onActiveChange: (value: boolean) => void;
   schedule?: JobSchedule;
+  /** Prefixes the field names and ids, so one form can hold several schedules (e.g. `basic` → basicQuartzCronExpression). */
+  prefix?: string;
+  title?: string;
+  description?: string;
 }) {
+  const name = (field: string) => (prefix ? `${prefix}${field.charAt(0).toUpperCase()}${field.slice(1)}` : field);
+  const id = (field: string) => (prefix ? `${prefix}-${field}` : field);
   return (
     <div className="space-y-4">
       <label className="flex items-center justify-between gap-4 rounded-md border p-3 text-sm">
         <span>
-          <span className="block font-medium">Scheduled execution</span>
-          <span className="text-xs text-muted-foreground">Run automatically using a Quartz cron schedule.</span>
+          <span className="block font-medium">{title}</span>
+          <span className="text-xs text-muted-foreground">{description}</span>
         </span>
-        <Switch checked={enabled} onCheckedChange={onEnabledChange} aria-label="Scheduled execution" />
+        <Switch checked={enabled} onCheckedChange={onEnabledChange} aria-label={title} />
       </label>
       <div className="grid gap-4 md:grid-cols-2">
         <div className="space-y-2 md:col-span-2">
-          <Label htmlFor="quartz-cron">Quartz cron expression</Label>
+          <Label htmlFor={id('quartz-cron')}>Quartz cron expression</Label>
           <Input
-            id="quartz-cron"
-            name="quartzCronExpression"
+            id={id('quartz-cron')}
+            name={name('quartzCronExpression')}
             defaultValue={schedule?.quartz_cron_expression ?? '0 0 8 * * ?'}
             placeholder="0 0 8 * * ?"
             required
@@ -284,10 +293,10 @@ export function ScheduleFields({
           <p className="text-xs text-muted-foreground">Seconds, minutes, hours, day of month, month, day of week.</p>
         </div>
         <div className="space-y-2">
-          <Label htmlFor="schedule-timezone">Timezone</Label>
+          <Label htmlFor={id('schedule-timezone')}>Timezone</Label>
           <Input
-            id="schedule-timezone"
-            name="timezoneId"
+            id={id('schedule-timezone')}
+            name={name('timezoneId')}
             defaultValue={schedule?.timezone_id ?? 'America/New_York'}
             placeholder="America/New_York"
             required
@@ -299,7 +308,12 @@ export function ScheduleFields({
             <span className="block font-medium">Schedule active</span>
             <span className="text-xs text-muted-foreground">Turn off to save the schedule in a paused state.</span>
           </span>
-          <Switch checked={active} onCheckedChange={onActiveChange} aria-label="Schedule active" disabled={!enabled} />
+          <Switch
+            checked={active}
+            onCheckedChange={onActiveChange}
+            aria-label={`${title}: schedule active`}
+            disabled={!enabled}
+          />
         </label>
       </div>
     </div>

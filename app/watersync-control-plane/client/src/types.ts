@@ -58,6 +58,8 @@ export type JobSchedule = {
 };
 export type JobRow = {
   job_id?: number;
+  /** The ingestion group the job runs (GET /api/jobs lists the jobs of a page of groups). */
+  ingestion_group?: string;
   settings?: {
     name?: string;
     schedule?: JobSchedule;
@@ -88,7 +90,13 @@ export type TableDraft = {
 /** Latest published WaterSync release, as returned by GET /api/latest-release. */
 export type LatestRelease = { version: string; name: string; notes: string; url: string; publishedAt: string | null };
 export type InferenceProgress = { completed: number; total: number };
-export type ImportGroupSummary = { ingestionGroup: string; configCount: number; hasJobSettings: boolean };
+export type ImportGroupSummary = {
+  ingestionGroup: string;
+  configCount: number;
+  hasJobSettings: boolean;
+  /** The group's row check jobs in the file: basic, detailed. */
+  rowChecks: Array<'basic' | 'detailed'>;
+};
 export type ImportJobResult = {
   ingestionGroup: string;
   jobId?: number;
@@ -96,17 +104,29 @@ export type ImportJobResult = {
   action?: 'created' | 'updated';
   error?: string;
 };
+/** A row check job of the file: the location's (ingestionGroup '') or a group's. */
+export type ImportRowCheckJobResult = {
+  ingestionGroup: string;
+  checkMode: 'basic' | 'detailed';
+  jobId?: number;
+  name?: string;
+  action?: 'created' | 'updated';
+  error?: string;
+};
 export type ImportResult = {
   dryRun: boolean;
   configCount: number;
   jobCount: number;
+  rowCheckJobCount: number;
   groups: ImportGroupSummary[];
   removedCount?: number;
   jobs?: ImportJobResult[];
+  rowCheckJobs?: ImportRowCheckJobResult[];
 };
 export type RowCheckMode = 'basic' | 'detailed';
 export type RowCheckRun = {
   runId?: number;
+  jobId: number;
   runUrl?: string;
   startTime?: number;
   endTime?: number;
@@ -131,14 +151,29 @@ export type JobCompute = {
   maxWorkers: number;
 };
 export type RunAsTarget = { mode: 'DEFAULT' | 'USER' | 'SERVICE_PRINCIPAL'; principal: string };
-/** The location's row check job, read back from the Databricks API (GET /api/row-checks/job). */
+/** A schedule as the job APIs take it and read it back. */
+export type Schedule = {
+  enabled: boolean;
+  quartzCronExpression: string;
+  timezoneId: string;
+  pauseStatus: 'PAUSED' | 'UNPAUSED';
+};
+/**
+ * A row check job, read back from the Databricks API (GET /api/row-checks/jobs). Each runs one check mode over
+ * the whole location (ingestionGroup '') or one group, and any of them can start a check from the app.
+ */
 export type RowCheckJob = {
   jobId: number;
+  name: string;
   workspaceUrl: string;
+  ingestionGroup: string;
+  checkMode: RowCheckMode;
+  /** A detailed check's range start, such as -30d; empty checks every row. */
+  rangeFrom: string;
   gitUrl: string;
   gitBranch: string;
   maxParallelTables: number;
-  schedule: JobSchedule | null;
+  schedule: Schedule;
   compute: JobCompute;
   runAs: RunAsTarget;
   runs: RowCheckRun[];

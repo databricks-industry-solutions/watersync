@@ -50,7 +50,7 @@ export function PerformanceTargetField({
       <p className="text-xs text-muted-foreground">
         Standard favors cost efficiency; performance optimized favors faster startup and execution.
         {sharedWith &&
-          ` Databricks applies one serverless performance mode per job, so this setting is shared with ${sharedWith}.`}
+          ` It also applies to ${sharedWith}: Databricks has one serverless performance mode per job, set here.`}
       </p>
     </div>
   );

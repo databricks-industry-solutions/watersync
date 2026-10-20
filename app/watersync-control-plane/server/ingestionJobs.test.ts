@@ -5,7 +5,9 @@ import { jobPayloadSchema } from './schemas.js';
 // A minimal in-memory workspace: whatever saveJob creates is what readJobSettings reads back, with the
 // identity fields Databricks adds (the creator is the app service principal; run_as_user_name is effective).
 const appServicePrincipal = '11111111-2222-3333-4444-555555555555';
-const state: { job?: jobs.JobSettings; pipeline?: pipelines.CreatePipeline } = {};
+// Jobs by id.
+const state: { jobs: Map<number, jobs.JobSettings>; pipeline?: pipelines.CreatePipeline } = { jobs: new Map() };
+let nextJobId = 7;
 const identity = (runAs?: { user_name?: string; service_principal_name?: string }) =>
   runAs?.user_name ?? runAs?.service_principal_name ?? appServicePrincipal;
 // The SDK's list methods return async iterables.
@@ -15,18 +17,28 @@ async function* listed<T>(items: T[]) {
 }
 const workspace = {
   jobs: {
-    list: vi.fn(() => listed(state.job ? [{ job_id: 7, settings: { name: state.job.name } }] : [])),
+    list: vi.fn(({ name }: { name: string }) =>
+      listed(
+        [...state.jobs]
+          .filter(([, settings]) => settings.name === name)
+          .map(([job_id, settings]) => ({ job_id, settings: { name: settings.name } }))
+      )
+    ),
     create: vi.fn((settings: jobs.JobSettings) => {
-      state.job = settings;
-      return Promise.resolve({ job_id: 7 });
+      const job_id = nextJobId++;
+      state.jobs.set(job_id, settings);
+      return Promise.resolve({ job_id });
     }),
-    reset: vi.fn(),
-    get: vi.fn(() =>
+    reset: vi.fn(({ job_id, new_settings }: { job_id: number; new_settings: jobs.JobSettings }) => {
+      state.jobs.set(job_id, new_settings);
+      return Promise.resolve();
+    }),
+    get: vi.fn(({ job_id }: { job_id: number }) =>
       Promise.resolve({
-        job_id: 7,
+        job_id,
         creator_user_name: appServicePrincipal,
-        run_as_user_name: identity(state.job?.run_as),
-        settings: state.job,
+        run_as_user_name: identity(state.jobs.get(job_id)?.run_as),
+        settings: state.jobs.get(job_id),
       })
     ),
   },
@@ -96,7 +108,7 @@ const roundTrip = async (body: ReturnType<typeof payload>) => {
 
 describe('readJobSettings', () => {
   beforeEach(() => {
-    state.job = undefined;
+    state.jobs.clear();
     state.pipeline = undefined;
   });
 

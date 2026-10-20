@@ -2,6 +2,7 @@ import { sql } from '@databricks/appkit-ui/js';
 
 type StringParam = ReturnType<typeof sql.string>;
 type IntParam = ReturnType<typeof sql.int>;
+type BooleanParam = ReturnType<typeof sql.boolean>;
 
 declare module '@databricks/appkit-ui/react' {
   interface QueryRegistry {
@@ -9,7 +10,9 @@ declare module '@databricks/appkit-ui/react' {
       name: 'config_entries';
       parameters: {
         table_name: StringParam;
+        ingestion_group: StringParam;
         search: StringParam;
+        tables: StringParam;
         page_size: IntParam;
         page_offset: IntParam;
         refresh_token: IntParam;
@@ -38,13 +41,16 @@ declare module '@databricks/appkit-ui/react' {
         num_partitions: number;
         update_dttm: string | null;
         enabled: boolean;
+        total_count: number | string;
       }>;
     };
     watermark_entries: {
       name: 'watermark_entries';
       parameters: {
         table_name: StringParam;
+        ingestion_group: StringParam;
         search: StringParam;
+        tables: StringParam;
         page_size: IntParam;
         page_offset: IntParam;
         refresh_token: IntParam;
@@ -58,16 +64,84 @@ declare module '@databricks/appkit-ui/react' {
         last_run_timestamp: string | null;
         status: string | null;
         last_error: string | null;
+        total_count: number | string;
       }>;
     };
     config_summary: {
       name: 'config_summary';
-      parameters: { config_table: StringParam; watermark_table: StringParam; refresh_token: IntParam };
+      parameters: {
+        config_table: StringParam;
+        watermark_table: StringParam;
+        ingestion_group: StringParam;
+        search: StringParam;
+        tables: StringParam;
+        stale_hours: IntParam;
+        refresh_token: IntParam;
+      };
       result: Array<{
         config_count: number;
         enabled_count: number;
+        group_count: number;
         failed_count: number;
+        success_count: number;
+        skipped_count: number;
+        full_refresh_count: number;
+        never_loaded_count: number;
+        stale_count: number;
         last_run_timestamp: string | null;
+      }>;
+    };
+    overview_attention: {
+      name: 'overview_attention';
+      parameters: {
+        config_table: StringParam;
+        watermark_table: StringParam;
+        ingestion_group: StringParam;
+        search: StringParam;
+        tables: StringParam;
+        stale_hours: IntParam;
+        refresh_token: IntParam;
+      };
+      result: Array<{
+        ingestion_group: string;
+        source_table_name: string;
+        ingestion_type: string;
+        status: string | null;
+        last_run_timestamp: string | null;
+        last_error: string | null;
+        reason: 'failed' | 'never_loaded' | 'stale';
+        total_count: number;
+      }>;
+    };
+    overview_groups: {
+      name: 'overview_groups';
+      parameters: {
+        config_table: StringParam;
+        watermark_table: StringParam;
+        row_check_table: StringParam;
+        ingestion_group: StringParam;
+        search: StringParam;
+        tables: StringParam;
+        stale_hours: IntParam;
+        page_size: IntParam;
+        page_offset: IntParam;
+        refresh_token: IntParam;
+      };
+      result: Array<{
+        ingestion_group: string;
+        table_count: number;
+        enabled_count: number;
+        failed_count: number;
+        never_loaded_count: number;
+        stale_count: number;
+        oldest_load: string | null;
+        latest_load: string | null;
+        match_count: number;
+        mismatch_count: number;
+        check_error_count: number;
+        unchecked_count: number;
+        last_checked_at: string | null;
+        total_count: number;
       }>;
     };
     ingestion_groups: {
@@ -105,15 +179,45 @@ declare module '@databricks/appkit-ui/react' {
         count_diff: number | string | null;
       }>;
     };
-    row_check_table_options: {
-      name: 'row_check_table_options';
+    row_check_status_map: {
+      name: 'row_check_status_map';
       parameters: {
         config_table: StringParam;
+        row_check_table: StringParam;
         ingestion_group: StringParam;
         search: StringParam;
         refresh_token: IntParam;
       };
+      result: Array<{ ingestion_group: string; source_table_name: string; state: string }>;
+    };
+    table_options: {
+      name: 'table_options';
+      parameters: {
+        config_table: StringParam;
+        ingestion_group: StringParam;
+        search: StringParam;
+        enabled_only: BooleanParam;
+        refresh_token: IntParam;
+      };
       result: Array<{ ingestion_group: string; source_table_name: string }>;
+    };
+    job_groups: {
+      name: 'job_groups';
+      parameters: {
+        config_table: StringParam;
+        ingestion_group: StringParam;
+        search: StringParam;
+        tables: StringParam;
+        page_size: IntParam;
+        page_offset: IntParam;
+        refresh_token: IntParam;
+      };
+      result: Array<{
+        ingestion_group: string;
+        source_count: number | string;
+        enabled_source_count: number | string;
+        total_count: number | string;
+      }>;
     };
     row_check_results: {
       name: 'row_check_results';
@@ -125,6 +229,7 @@ declare module '@databricks/appkit-ui/react' {
         tables: StringParam;
         status: StringParam;
         page_size: IntParam;
+        page_offset: IntParam;
         refresh_token: IntParam;
       };
       result: Array<{
@@ -187,6 +292,7 @@ declare module '@databricks/appkit-ui/react' {
         row_check_table: StringParam;
         status: StringParam;
         page_size: IntParam;
+        page_offset: IntParam;
         refresh_token: IntParam;
       };
       result: Array<{

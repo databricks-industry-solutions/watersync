@@ -231,6 +231,14 @@ export const jobPayloadSchema = locationSchema.extend({
   pipelineCompute: pipelineComputeSchema.prefault({ mode: 'SERVERLESS' }),
   runAs: runAsSchema.prefault({}),
 });
+// A detailed check's range start: a number, a date, a timestamp or days back (-30d); empty checks every row.
+const rangeBound = z
+  .string()
+  .trim()
+  .regex(
+    /^$|^-?\d+(\.\d+)?$|^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}:\d{2})?$|^-\d{1,5}d$/,
+    'Use a number, a date (2026-09-01), a timestamp (2026-09-01 12:00:00) or days back (-30d)'
+  );
 export const rowCheckJobPayloadSchema = locationSchema.extend({
   gitUrl: jobPayloadSchema.shape.gitUrl,
   gitBranch: jobPayloadSchema.shape.gitBranch,
@@ -247,6 +255,11 @@ export const rowCheckJobPayloadSchema = locationSchema.extend({
     maxWorkers: 4,
   }),
   runAs: runAsSchema.shape.job,
+  // Which tables the job checks by default: one ingestion group, or every group ('') with the location's job.
+  ingestionGroup: z.string().trim().optional().default(''),
+  checkMode: z.enum(['basic', 'detailed']).optional().default('basic'),
+  // A detailed check's range start; ignored for a basic check.
+  rangeFrom: rangeBound.optional().default(''),
 });
 export const rowCheckRunPayloadSchema = locationSchema.extend({
   checkMode: z.enum(['basic', 'detailed']),
@@ -259,6 +272,10 @@ export const rowCheckRunPayloadSchema = locationSchema.extend({
   rangeFrom: z.string().trim().max(64).optional().default(''),
   rangeTo: z.string().trim().max(64).optional().default(''),
 });
+// GET /api/jobs: the groups of one page of the Jobs page (at most 100, the largest page size).
+export const jobsListQuerySchema = locationSchema.extend({
+  group: z.array(z.string().min(1)).max(100),
+});
 export const jobSchedulePayloadSchema = scheduleSchema.extend({ jobId: z.number().int().positive() });
 
 // Entries are kept loose here and validated one by one against configSchema / jobPayloadSchema, with the
@@ -270,6 +287,8 @@ export const transferFileSchema = z.object({
   version: z.literal(transferVersion, { error: `Unsupported export version (expected ${transferVersion})` }),
   configs: z.array(z.record(z.string(), z.unknown())).max(5000).optional().default([]),
   jobs: z.array(z.record(z.string(), z.unknown())).max(500).optional().default([]),
+  // Row check jobs: the location's (ingestionGroup '') and each group's, each with its check mode.
+  rowCheckJobs: z.array(z.record(z.string(), z.unknown())).max(1000).optional().default([]),
 });
 export const importPayloadSchema = locationSchema.extend({
   file: transferFileSchema,
@@ -289,6 +308,8 @@ export type Schedule = z.infer<typeof scheduleSchema>;
 export type ConfigPayload = z.infer<typeof configSchema>;
 export type JobPayload = z.infer<typeof jobPayloadSchema>;
 export type RowCheckJobPayload = z.infer<typeof rowCheckJobPayloadSchema>;
+/** Row check job settings as exported: the payload without the location it was deployed to. */
+export type RowCheckJobSettings = Omit<RowCheckJobPayload, 'catalog' | 'schema'>;
 export type RowCheckRunPayload = z.infer<typeof rowCheckRunPayloadSchema>;
 /** Job settings as stored and exported: the job payload without the location it was deployed to. */
 export type JobSettings = Omit<JobPayload, 'catalog' | 'schema'>;

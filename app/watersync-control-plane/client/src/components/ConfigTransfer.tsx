@@ -145,7 +145,9 @@ function ImportDialog({
     }
   };
   const summary = result ?? preview;
-  const deploying = deployJobs && Boolean(preview?.jobCount);
+  const deploying = deployJobs && Boolean(preview?.jobCount || preview?.rowCheckJobCount);
+  // Row check jobs of the whole location belong to no group, so they are listed under the table.
+  const locationChecks = (result?.rowCheckJobs ?? []).filter((check) => !check.ingestionGroup);
   return (
     <Dialog
       open={open}
@@ -175,7 +177,7 @@ function ImportDialog({
               <p className="text-sm text-muted-foreground">
                 {result
                   ? `Imported ${result.configCount} source tables${result.removedCount ? `, removed ${result.removedCount} no longer in the file` : ''}.`
-                  : `${summary.configCount} source tables in ${summary.groups.length} groups, job settings for ${summary.jobCount} groups.`}
+                  : `${summary.configCount} source tables in ${summary.groups.length} groups, job settings for ${summary.jobCount} groups, ${summary.rowCheckJobCount} row check jobs.`}
               </p>
               <Table>
                 <TableHeader>
@@ -188,19 +190,40 @@ function ImportDialog({
                 <TableBody>
                   {summary.groups.map((group) => {
                     const job = result?.jobs?.find((item) => item.ingestionGroup === group.ingestionGroup);
+                    const checks = (result?.rowCheckJobs ?? []).filter(
+                      (check) => check.ingestionGroup === group.ingestionGroup
+                    );
                     return (
                       <TableRow key={group.ingestionGroup}>
                         <TableCell>{group.ingestionGroup}</TableCell>
                         <TableCell>{group.configCount}</TableCell>
                         <TableCell>
-                          {job?.error ? (
-                            <Badge variant="destructive" title={job.error}>
-                              Failed
-                            </Badge>
-                          ) : job ? (
-                            <Badge>{`Job ${job.jobId} ${job.action}`}</Badge>
-                          ) : group.hasJobSettings ? (
-                            <Badge variant="secondary">Settings included</Badge>
+                          {job || checks.length ? (
+                            <div className="flex flex-wrap gap-1">
+                              {job?.error ? (
+                                <Badge variant="destructive" title={job.error}>
+                                  Failed
+                                </Badge>
+                              ) : (
+                                job && <Badge>{`Job ${job.jobId} ${job.action}`}</Badge>
+                              )}
+                              {checks.map((check) => (
+                                <Badge
+                                  key={check.checkMode}
+                                  variant={check.error ? 'destructive' : 'outline'}
+                                  title={check.error}
+                                >
+                                  {`${check.checkMode} row check ${check.error ? 'failed' : check.action}`}
+                                </Badge>
+                              ))}
+                            </div>
+                          ) : group.hasJobSettings || group.rowChecks.length ? (
+                            <div className="flex flex-wrap gap-1">
+                              {group.hasJobSettings && <Badge variant="secondary">Settings included</Badge>}
+                              {group.rowChecks.map((mode) => (
+                                <Badge key={mode} variant="outline">{`${mode} row check job`}</Badge>
+                              ))}
+                            </div>
                           ) : (
                             <span className="text-muted-foreground">{'—'}</span>
                           )}
@@ -218,6 +241,26 @@ function ImportDialog({
                     <AlertDescription>{job.error}</AlertDescription>
                   </Alert>
                 ))}
+              {locationChecks.length > 0 && (
+                <p className="text-sm text-muted-foreground">
+                  Row check jobs of the whole location:{' '}
+                  {locationChecks
+                    .map(
+                      (check) => `${check.checkMode} ${check.error ? 'failed' : `job ${check.jobId} ${check.action}`}`
+                    )
+                    .join(', ')}
+                </p>
+              )}
+              {result?.rowCheckJobs
+                ?.filter((check) => check.error)
+                .map((check) => (
+                  <Alert key={`${check.ingestionGroup}/${check.checkMode}`} variant="destructive">
+                    <AlertTitle>
+                      The {check.checkMode} row check job for {check.ingestionGroup || 'the location'} was not saved
+                    </AlertTitle>
+                    <AlertDescription>{check.error}</AlertDescription>
+                  </Alert>
+                ))}
             </div>
           )}
           {preview && !result && (
@@ -230,9 +273,9 @@ function ImportDialog({
               />
               <Toggle
                 name="deployJobs"
-                label="Create or update the Databricks job (and CDC pipeline) of each group with job settings"
+                label="Create or update the Databricks jobs in the file: each group's ingestion job (with its CDC pipeline) and the row check jobs"
                 checked={deploying}
-                disabled={!preview.jobCount}
+                disabled={!preview.jobCount && !preview.rowCheckJobCount}
                 onCheckedChange={setDeployJobs}
               />
               <p className="text-xs text-muted-foreground">

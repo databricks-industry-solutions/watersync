@@ -113,7 +113,10 @@ def import_config(
     )
     groups = ", ".join(f"{group['ingestionGroup']} ({group['configCount']})" for group in result["groups"])
     if dry_run:
-        log(f"Valid: {result['configCount']} source tables, job settings for {result['jobCount']} groups: {groups}")
+        log(
+            f"Valid: {result['configCount']} source tables, job settings for {result['jobCount']} groups, "
+            f"{result.get('rowCheckJobCount', 0)} row check jobs: {groups}"
+        )
         return True
     log(f"Imported {result['configCount']} source tables into {catalog}.{schema}: {groups}")
     if result.get("removedCount"):
@@ -130,6 +133,14 @@ def import_config(
         except RequestFailed as error:
             succeeded = False
             log(f"Job for {group} failed: {error}")
+    for check in file.get("rowCheckJobs", []):
+        label = f"{check.get('checkMode', 'basic')} row check job for {check.get('ingestionGroup') or 'the location'}"
+        try:
+            saved = app.request("POST", "/api/row-checks/job", body={**check, "catalog": catalog, "schema": schema})
+            log(f"{label[0].upper()}{label[1:]}: {saved['action']} job {saved['jobId']} ({saved['name']})")
+        except RequestFailed as error:
+            succeeded = False
+            log(f"{label[0].upper()}{label[1:]} failed: {error}")
     return succeeded
 
 

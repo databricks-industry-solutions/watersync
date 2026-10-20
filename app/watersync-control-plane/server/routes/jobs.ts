@@ -1,8 +1,8 @@
 import { z } from 'zod';
 import type { Application } from 'express';
-import { jobPayloadSchema, jobSchedulePayloadSchema } from '../schemas.js';
-import { workspace, workspaceBaseUrl } from '../sql.js';
-import { saveJob } from '../ingestionJobs.js';
+import { jobPayloadSchema, jobSchedulePayloadSchema, jobsListQuerySchema } from '../schemas.js';
+import { workspace } from '../sql.js';
+import { listGroupJobs, saveJob } from '../ingestionJobs.js';
 import { apiRoute, logger } from '../logging.js';
 
 /**
@@ -12,49 +12,13 @@ import { apiRoute, logger } from '../logging.js';
 export function registerJobRoutes(app: Application) {
   app.get(
     '/api/jobs',
-    apiRoute('jobs_list', async (_req, res) => {
-      const visibleJobs = [];
-      for await (const job of workspace.jobs.list({ limit: 100, expand_tasks: false })) visibleJobs.push(job);
-      const workspaceUrl = workspaceBaseUrl();
-      const result = [];
-      for (let offset = 0; offset < visibleJobs.length; offset += 8) {
-        const batch = visibleJobs.slice(offset, offset + 8);
-        const summaries = await Promise.all(
-          batch.map(async (job) => {
-            const recentRuns = [];
-            if (job.job_id) {
-              for await (const run of workspace.jobs.listRuns({
-                job_id: job.job_id,
-                limit: 10,
-                expand_tasks: false,
-              })) {
-                recentRuns.push({
-                  run_id: run.run_id,
-                  run_url:
-                    job.job_id && run.run_id
-                      ? `${workspaceBaseUrl()}/jobs/${job.job_id}/runs/${run.run_id}`
-                      : undefined,
-                  run_name: run.run_name,
-                  start_time: run.start_time,
-                  end_time: run.end_time,
-                  setup_duration: run.setup_duration,
-                  execution_duration: run.execution_duration,
-                  cleanup_duration: run.cleanup_duration,
-                  state: run.state,
-                });
-              }
-            }
-            return {
-              ...job,
-              workspace_url: job.job_id ? `${workspaceUrl}/jobs/${job.job_id}` : workspaceUrl,
-              runs: recentRuns,
-            };
-          })
-        );
-        result.push(...summaries);
-      }
-      logger.debug('jobs.listed', { jobCount: result.length });
-      res.json({ jobs: result });
+    apiRoute('jobs_list', async (req, res) => {
+      // A page of groups from the Jobs page; each has at most one generated job at the location.
+      const query = jobsListQuerySchema.parse({
+        ...req.query,
+        group: req.query.group === undefined ? [] : [req.query.group].flat(),
+      });
+      res.json(await listGroupJobs(query.catalog, query.schema, query.group));
     })
   );
 

@@ -13,7 +13,7 @@ Or build a wheel for production jobs:
 ```bash
 pip install build
 python -m build --wheel
-# upload dist/watersync-0.3.0-py3-none-any.whl to a UC volume
+# upload dist/watersync-0.3.1-py3-none-any.whl to a UC volume
 ```
 
 Optional extras: `watersync[lakebase]` (Lakebase test setup) and `watersync[zerobus]` (ZeroBus log handler, see [Structured logs with ZeroBus](Running-Ingestion#structured-logs-with-zerobus)).

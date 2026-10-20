@@ -26,17 +26,20 @@ from pyspark.sql.types import (
     TimestampType,
 )
 
+from watersync.common import epic_csa_table_name
 from watersync.ingestion import JdbcIngestionConfigRepository
 from watersync.models import IngestionConfig, JdbcRuntimeSettings
 from watersync.row_check_sql import (
     DATE_OFFSET_DAYS,
     CheckDialect,
     ChunkPlan,
+    CsaChanges,
     RowRange,
     boolean_code_sql,
     check_dialect,
     chunk_aggregate_query,
     date_code_sql,
+    is_time_bound,
     quote_identifier,
     string_hash_sql,
 )
@@ -199,7 +202,7 @@ class RowCheckRunner:
         self.check_mode = check_mode
         self.job_run_id = job_run_id
         self.max_parallel_tables = max(1, max_parallel_tables)
-        # Checks only rows with range_from <= column < range_to (column defaults to each table's chunk column).
+        # Checks only rows with range_from <= column < range_to; without a column, see resolve_range and select_rows.
         self.range_column = range_column.strip()
         self.range_from = range_from.strip()
         self.range_to = range_to.strip()
@@ -339,14 +342,13 @@ class RowCheckRunner:
     def compare_counts(
         self, config: IngestionConfig, worker: TimestampWatermarkIngestionWorker, target_df
     ) -> dict[str, Any]:
-        where = "1=1"
         result: dict[str, Any] = {}
+        where = "1=1"
         if self.has_range:
             dialect = check_dialect(worker.sql_dialect, config.jdbc_url)
-            row_range = self.resolve_range(config, self.source_fields(worker))
-            where = row_range.source_sql(dialect)
-            target_df = target_df.filter(self.range_filter(row_range, target_df.columns))
-            result["checked_range"] = row_range.describe()
+            where, target_df, result["checked_range"] = self.select_rows(
+                config, worker, dialect, self.source_fields(worker), target_df
+            )
         count_query = f"(SELECT COUNT(*) AS row_count FROM {config.source_table_name} WHERE {where}) row_count"
         # Positional access: Oracle returns the alias in upper case.
         result["source_count"] = int(worker.build_jdbc_reader(count_query).load().first()[0])
@@ -364,11 +366,34 @@ class RowCheckRunner:
         schema = worker.build_jdbc_reader(f"(SELECT * FROM {worker.config.source_table_name}) source_schema").load().schema
         return {f.name.lower(): f for f in schema.fields if f.name.lower() not in EXCLUDED_COLUMNS}
 
-    def resolve_range(self, config: IngestionConfig, fields: dict[str, StructField]) -> RowRange:
+    @property
+    def range_is_time(self) -> bool:
+        """Whether the set bounds are dates, timestamps or days back (-30d), not numbers."""
+        bounds = [bound for bound in (self.range_from, self.range_to) if bound]
+        return bool(bounds) and all(is_time_bound(bound) for bound in bounds)
+
+    def resolve_range(self, config: IngestionConfig, fields: dict[str, StructField]) -> RowRange | None:
+        """
+        The range to filter by. Without a range column, a time range goes on the timestamp watermark column, or
+        the chunk column when that is a timestamp; None means the table has no such column, so every row is checked.
+        """
         if self.range_column:
             field = fields.get(self.range_column.lower())
             if field is None:
                 raise ValueError(f"Range column '{self.range_column}' is not a column of the source table")
+        elif self.range_is_time:
+            watermark = fields.get(config.watermark_column.lower()) if config.watermark_column else None
+            chunk = chunk_field(config, fields)
+            field = next(
+                (
+                    candidate
+                    for candidate in (watermark, chunk)
+                    if candidate is not None and range_kind(candidate) == "timestamp"
+                ),
+                None,
+            )
+            if field is None:
+                return None
         else:
             field = chunk_field(config, fields)
             if field is None:
@@ -377,6 +402,46 @@ class RowCheckRunner:
                     "to filter a range by; set the range column"
                 )
         return RowRange.parse(field.name, range_kind(field), self.range_from, self.range_to, self.range_now)
+
+    def select_rows(
+        self,
+        config: IngestionConfig,
+        worker: TimestampWatermarkIngestionWorker,
+        dialect: CheckDialect,
+        fields: dict[str, StructField],
+        target_df,
+    ) -> tuple[str, Any, str]:
+        """
+        The rows a ranged check compares: the source WHERE clause, the target rows, and what was checked.
+        A time range on an EPIC CSA table checks the keys its CSA change table lists as changed in the range.
+        """
+        if config.epic_csa_enabled and not self.range_column and self.range_is_time:
+            changes = CsaChanges.parse(
+                config.source_table_name,
+                epic_csa_table_name(config.source_table_name),
+                config.key_column_list,
+                self.range_from,
+                self.range_to,
+                self.range_now,
+            )
+            target_keys = []
+            for key in config.key_column_list:
+                name = next((c for c in target_df.columns if c.lower() == key.lower()), None)
+                if name is None:
+                    raise ValueError(f"Key column '{key}' is not a column of the target table")
+                target_keys.append(name)
+            changed = worker.build_jdbc_reader(changes.keys_query(dialect)).load().toDF(*target_keys)
+            target = target_df.join(changed, on=target_keys, how="left_semi")
+            oldest = worker.build_jdbc_reader(changes.oldest_query()).load().first()[0]
+            return changes.source_sql(dialect), target, changes.describe(oldest)
+        row_range = self.resolve_range(config, fields)
+        if row_range is None:
+            return "1=1", target_df, "every row: the table has no timestamp column to filter the range by"
+        return (
+            row_range.source_sql(dialect),
+            target_df.filter(self.range_filter(row_range, target_df.columns)),
+            row_range.describe(),
+        )
 
     @staticmethod
     def range_filter(row_range: RowRange, columns: list[str]):
@@ -412,11 +477,9 @@ class RowCheckRunner:
         keys = [by_name[key.lower()].name for key in config.key_column_list]
 
         where = "1=1"
-        row_range = None
+        checked_range = None
         if self.has_range:
-            row_range = self.resolve_range(config, by_name)
-            where = row_range.source_sql(dialect)
-            target = target.filter(self.range_filter(row_range, target.columns))
+            where, target, checked_range = self.select_rows(config, worker, dialect, by_name, target)
 
         plan = self.plan_chunks(config, worker, dialect, by_name, where)
         chunks, details = self.compare_chunks(worker, dialect, plan, fields, target, where)
@@ -430,7 +493,7 @@ class RowCheckRunner:
             "mismatched_chunks": len(mismatched),
             "drilled_chunks": len(drilled),
             "compared_columns": ",".join(f.name for f in fields),
-            "checked_range": row_range.describe() if row_range else None,
+            "checked_range": checked_range,
             "missing_in_target": 0,
             "extra_in_target": 0,
             # Without keys a changed row shows up as one missing and one extra row.
@@ -438,7 +501,7 @@ class RowCheckRunner:
         }
         if drilled:
             chunk_ids = [chunk["chunk"] for chunk in drilled]
-            if plan.kind == "none" and not row_range:
+            if plan.kind == "none" and where == "1=1":
                 source_rows = worker.read_source_jdbc_standard(None)
             else:
                 predicate = f"({plan.source_predicate(chunk_ids, dialect)}) AND {where}"

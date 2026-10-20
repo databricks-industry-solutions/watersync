@@ -189,10 +189,11 @@ def chunk_aggregate_query(
     aggregates = ["COUNT(*) AS row_count"]
     aggregates += [f"{decimal_sum_sql(column, scale)} AS {alias}" for alias, column, scale in sums]
     aggregates += [f"{decimal_sum_sql(expr, 0)} AS {alias}" for alias, expr in codes]
-    # The derived table lets GROUP BY use the alias, which SQL Server and Oracle do not allow directly.
+    # The derived table lets GROUP BY use the alias, which SQL Server and Oracle do not allow directly. The table
+    # keeps its name, unaliased, so a WHERE clause can refer to it (CsaChanges.source_sql).
     return (
         f"(SELECT ws_chunk_id, {', '.join(aggregates)} FROM ("
-        f"SELECT {chunk_sql} AS ws_chunk_id, src.* FROM {table} src WHERE {where}"
+        f"SELECT {chunk_sql} AS ws_chunk_id, {table}.* FROM {table} WHERE {where}"
         f") chunked GROUP BY ws_chunk_id) chunk_aggregates"
     )
 
@@ -258,6 +259,80 @@ def parse_range_bound(value: str, kind: RangeKind, now: datetime | None = None) 
                 f"Range bound '{text}' is not a date or timestamp; use YYYY-MM-DD, 'YYYY-MM-DD HH:MM:SS' or -<days>d"
             ) from None
     return text
+
+
+def is_time_bound(value: str) -> bool:
+    """Whether a bound reads as a time (a date, a timestamp or -<days>d) rather than a number."""
+    text = (value or "").strip()
+    if not text:
+        return False
+    try:
+        return not Decimal(text).is_finite()
+    except InvalidOperation:
+        return True
+
+
+@dataclass(frozen=True)
+class CsaChanges:
+    """
+    Rows of an EPIC CSA table whose key the CSA change table lists as changed with ``start <= _UPDATE_DT < end``.
+
+    The change table keeps changes only for its retention period, so a start older than that checks fewer days.
+    """
+
+    table: str
+    csa_table: str
+    keys: tuple[str, ...]
+    start: datetime | None = None
+    end: datetime | None = None
+
+    @classmethod
+    def parse(
+        cls, table: str, csa_table: str, keys: list[str], start: str, end: str, now: datetime | None = None
+    ) -> CsaChanges:
+        if not keys:
+            raise ValueError(f"EPIC CSA table {table} needs key_columns to check the rows changed in a range")
+        bounds = [parse_range_bound(bound, "timestamp", now) for bound in (start, end)]
+        return cls(table, csa_table, tuple(keys), *bounds)  # type: ignore[arg-type]
+
+    def _bounds_sql(self, dialect: CheckDialect) -> list[str]:
+        parts = []
+        if self.start is not None:
+            parts.append(f"csa._UPDATE_DT >= {timestamp_literal(self.start, dialect)}")
+        if self.end is not None:
+            parts.append(f"csa._UPDATE_DT < {timestamp_literal(self.end, dialect)}")
+        return parts
+
+    def source_sql(self, dialect: CheckDialect) -> str:
+        """WHERE clause on the source table: its key has a change in the range."""
+        joins = [f"csa.{key} = {self.table}.{key}" for key in self.keys]
+        return f"EXISTS (SELECT 1 FROM {self.csa_table} csa WHERE {' AND '.join(joins + self._bounds_sql(dialect))})"
+
+    def keys_query(self, dialect: CheckDialect) -> str:
+        """The changed keys, to pick the same rows of the target."""
+        columns = ", ".join(f"csa.{key} AS {key}" for key in self.keys)
+        where = " AND ".join(self._bounds_sql(dialect)) or "1=1"
+        return f"(SELECT DISTINCT {columns} FROM {self.csa_table} csa WHERE {where}) csa_changes"
+
+    def oldest_query(self) -> str:
+        return f"(SELECT MIN(csa._UPDATE_DT) AS oldest FROM {self.csa_table} csa) csa_oldest"
+
+    def describe(self, oldest: datetime | None) -> str:
+        """What was checked; says so when the change table no longer reaches back to the start."""
+        parts = []
+        if self.start is not None:
+            parts.append(f"since {_display(self.start)}")
+        if self.end is not None:
+            parts.append(f"before {_display(self.end)}")
+        text = f"keys changed {' and '.join(parts)} in {self.csa_table}"
+        if oldest is None:
+            return f"{text}; the CSA change table is empty"
+        if self.start is not None and oldest > self.start:
+            return (
+                f"{text}; CSA keeps changes only since {_display(oldest)}, so earlier changes were not checked: "
+                "schedule detailed checks more often than the CSA retention period"
+            )
+        return text
 
 
 def range_literal(value: Decimal | datetime | str, dialect: CheckDialect) -> str:

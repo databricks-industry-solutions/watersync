@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
 import { sql } from '@databricks/appkit-ui/js';
 import {
@@ -46,19 +46,29 @@ import { Clock3, ExternalLink, LayoutGrid, List, Play, Plus, RefreshCw } from 'l
 import { api } from '../lib/api';
 import { reportError, useReportedFailure } from '../lib/logging';
 import type { JobRow, Location } from '../types';
-import { fqn, displayTime, runStatus, statusVariant, runDuration, formString } from '../utils';
+import { fqn, displayTime, runDuration, formString } from '../utils';
+import { RunTimeline, StatusBadge } from './JobRuns';
 import { useControl } from '../lib/control';
 import { PageTitle, ErrorState, ScheduleFields } from './shared';
 import { JobComputeFields, NodeTypeOptions, PerformanceTargetField, RunAsFields } from './JobFields';
 import { computeFromForm, useNodeTypes } from '../lib/jobCompute';
+import { FilterBar } from './FilterBar';
+import { Pagination } from './Pagination';
+import { usePageFilters } from '../lib/pageFilters';
+import { usePagination } from '../lib/pagination';
 import type { PerformanceTarget } from '../lib/jobCompute';
 
 export function JobsPage() {
-  const { location, revision } = useControl();
+  const { location, revision, refresh } = useControl();
+  const filters = usePageFilters();
+  const pages = usePagination(filters.key);
   const [jobs, setJobs] = useState<JobRow[]>([]);
+  const [missing, setMissing] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
+  // The group a "Create job" button preselects; empty for the header button.
+  const [dialogGroup, setDialogGroup] = useState('');
   const [runningJob, setRunningJob] = useState<number | null>(null);
   const [scheduleJob, setScheduleJob] = useState<JobRow | null>(null);
   const [view, setView] = useJobsView();
@@ -75,19 +85,74 @@ export function JobsPage() {
     error: groupsError,
   } = useAnalyticsQuery('ingestion_groups', groupParams);
   useReportedFailure('query.ingestion_groups', groupsError, location);
-  const load = () => {
+  // One page of the groups matching the filters; each group has at most one generated job.
+  const pageParams = useMemo(
+    () => ({
+      config_table: sql.string(fqn(location, 'jdbc_ingestion_config')),
+      ...filters.params,
+      ...pages.params,
+      refresh_token: sql.int(revision),
+    }),
+    [location, filters.params, pages.params, revision]
+  );
+  const { data: pageGroups, loading: pageLoading, error: pageError } = useAnalyticsQuery('job_groups', pageParams);
+  useReportedFailure('query.job_groups', pageError, { ...location, group: filters.group, search: filters.search });
+  const total = Number(pageGroups?.[0]?.total_count ?? 0);
+  const groupNames = useMemo(() => (pageGroups ?? []).map((row) => row.ingestion_group), [pageGroups]);
+  const load = useCallback(() => {
+    if (!pageGroups) return;
+    if (!groupNames.length) {
+      setJobs([]);
+      setMissing([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
-    api<{ jobs: JobRow[] }>('/api/jobs')
-      .then((x) => setJobs(x.jobs))
-      .catch((e: unknown) => setError(reportError('jobs.list', e)))
+    const query = new URLSearchParams({ catalog: location.catalog, schema: location.schema });
+    for (const name of groupNames) query.append('group', name);
+    api<{ jobs: JobRow[]; missing: string[] }>(`/api/jobs?${query}`)
+      .then((x) => {
+        setJobs(x.jobs);
+        setMissing(x.missing);
+      })
+      .catch((e: unknown) => setError(reportError('jobs.list', e, { ...location, groups: groupNames.length })))
       .finally(() => setLoading(false));
-  };
-  // Reload on refresh too, e.g. after an import from the header created or updated jobs.
+  }, [location, pageGroups, groupNames]);
+  // Reload when the page of groups changes, including after a refresh or an import from the header.
   useEffect(() => {
     const timer = window.setTimeout(load, 0);
     return () => window.clearTimeout(timer);
-  }, [revision]);
+  }, [load]);
+  const noJobsOnPage = 'None of the groups on this page has a job yet.';
+  const missingGroups = missing.length > 0 && (
+    <div className="flex flex-wrap items-center gap-2 text-sm">
+      <span className="mr-1 text-muted-foreground">
+        {missing.length === 1 ? 'This group has' : `These ${missing.length} groups have`} no job yet:
+      </span>
+      {missing.map((group) => (
+        <Button key={group} variant="outline" size="sm" onClick={() => openDialog(group)}>
+          <Plus className="mr-1.5 h-3.5 w-3.5" />
+          {group}
+        </Button>
+      ))}
+    </div>
+  );
+  const pager = (
+    <Pagination
+      total={total}
+      page={pages.page}
+      pageSize={pages.pageSize}
+      onPageChange={pages.setPage}
+      onPageSizeChange={pages.setPageSize}
+      noun="groups"
+      bordered={view === 'list'}
+    />
+  );
+  const openDialog = (group = '') => {
+    setDialogGroup(group);
+    setOpen(true);
+  };
   const run = async (id: number, fullRefresh = false) => {
     setRunningJob(id);
     try {
@@ -134,35 +199,68 @@ export function JobsPage() {
                 List
               </ToggleGroupItem>
             </ToggleGroup>
-            <Button onClick={() => setOpen(true)}>
+            <Button onClick={() => openDialog()}>
               <Plus className="mr-2 h-4 w-4" />
               Create job
             </Button>
           </div>
         }
       />
-      {error && <ErrorState message={error} />}{' '}
-      {loading ? (
+      <FilterBar location={location} revision={revision} filters={filters} onRefresh={refresh} />
+      {error && <ErrorState message={error} />}
+      {pageError && <ErrorState message={pageError} />}
+      {pageLoading || loading ? (
         <Skeleton className="h-72" />
-      ) : !jobs.length ? (
+      ) : !groupNames.length ? (
         <Empty>
           <EmptyHeader>
-            <EmptyTitle>No jobs visible</EmptyTitle>
+            <EmptyTitle>{filters.filtered ? 'No group matches the filters' : 'No ingestion groups'}</EmptyTitle>
             <EmptyDescription>
-              Grant the app service principal workspace access or create the first job.
+              {filters.filtered
+                ? 'Change or clear the filters to see more jobs.'
+                : 'Add source tables on the Configuration page; each group then gets one job.'}
             </EmptyDescription>
           </EmptyHeader>
+          {filters.filtered && (
+            <Button variant="outline" size="sm" onClick={filters.clear}>
+              Clear filters
+            </Button>
+          )}
         </Empty>
-      ) : view === 'list' ? (
-        <JobList jobs={jobs} actions={actions} />
       ) : (
-        <div className="grid gap-4 lg:grid-cols-2">
-          {jobs.map((job) => (
-            <JobCard key={job.job_id} job={job} actions={actions} />
-          ))}
-        </div>
+        <>
+          {view === 'list' ? (
+            // One card: the job table, the groups without a job, and the pager.
+            <Card className="gap-0 overflow-hidden py-0">
+              {jobs.length ? (
+                <JobTable jobs={jobs} actions={actions} />
+              ) : (
+                <p className="px-4 py-8 text-center text-sm text-muted-foreground">{noJobsOnPage}</p>
+              )}
+              {missingGroups && <div className="border-t px-4 py-3">{missingGroups}</div>}
+              {pager}
+            </Card>
+          ) : (
+            // Job cards straight on the page, then the groups without a job, then the pager in its own bar.
+            <div className="space-y-4">
+              {jobs.length ? (
+                <div className="grid gap-4 lg:grid-cols-2">
+                  {jobs.map((job) => (
+                    <JobCard key={job.job_id} job={job} actions={actions} />
+                  ))}
+                </div>
+              ) : (
+                <p className="py-8 text-center text-sm text-muted-foreground">{noJobsOnPage}</p>
+              )}
+              {missingGroups && <div className="rounded-xl border border-dashed px-4 py-3">{missingGroups}</div>}
+              <Card className="gap-0 overflow-hidden py-0">{pager}</Card>
+            </div>
+          )}
+        </>
       )}
       <JobDialog
+        key={open ? `open-${dialogGroup}` : 'closed'}
+        initialGroup={dialogGroup}
         open={open}
         onOpenChange={setOpen}
         location={location}
@@ -219,48 +317,12 @@ const jobName = (job: JobRow) => job.settings?.name ?? `Job ${job.job_id}`;
 const fullRefreshPrompt =
   'Run a full refresh? Staging will be replaced with a fresh snapshot and CDC will reprocess from scratch.';
 
-function StatusBadge({ job }: { job: JobRow }) {
-  const status = runStatus(job.runs[0]);
-  return <Badge variant={statusVariant(status)}>{status.replaceAll('_', ' ')}</Badge>;
-}
-
 function ScheduleBadge({ job }: { job: JobRow }) {
   const schedule = job.settings?.schedule;
   return (
     <Badge variant={schedule?.pause_status === 'UNPAUSED' ? 'secondary' : 'outline'}>
       {!schedule ? 'Manual only' : schedule.pause_status === 'UNPAUSED' ? 'Active' : 'Paused'}
     </Badge>
-  );
-}
-
-function RunTimeline({ job, compact = false }: { job: JobRow; compact?: boolean }) {
-  return (
-    <div
-      className={compact ? 'run-timeline run-timeline-compact' : 'run-timeline'}
-      aria-label={`Recent run status for ${job.settings?.name ?? `job ${job.job_id}`}`}
-    >
-      {[...job.runs].reverse().map((recentRun) => {
-        const status = runStatus(recentRun);
-        const label = `${status.replaceAll('_', ' ')} · ${displayTime(recentRun.start_time)} · ${runDuration(recentRun)}`;
-        return (
-          <a
-            key={recentRun.run_id}
-            className={`run-mark run-mark-${status.toLowerCase()}`}
-            title={label}
-            aria-label={label}
-            href={recentRun.run_url}
-            target="_blank"
-            rel="noreferrer"
-          >
-            {status === 'RUNNING' ? (
-              <RefreshCw className={compact ? 'h-3 w-3 animate-spin' : 'h-4 w-4 animate-spin'} aria-hidden="true" />
-            ) : (
-              <span>{status === 'SUCCESS' ? '✓' : '!'}</span>
-            )}
-          </a>
-        );
-      })}
-    </div>
   );
 }
 
@@ -398,64 +460,63 @@ function JobCard({ job, actions }: { job: JobRow; actions: JobActionHandlers }) 
 }
 
 /** One row per job, so many jobs can be compared at a glance. */
-function JobList({ jobs, actions }: { jobs: JobRow[]; actions: JobActionHandlers }) {
+/** The jobs as table rows; the page puts the table in its card with the pager. */
+function JobTable({ jobs, actions }: { jobs: JobRow[]; actions: JobActionHandlers }) {
   return (
-    <Card>
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Job</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead>Schedule</TableHead>
-            <TableHead title="Newest on the right">Last 10 runs</TableHead>
-            <TableHead className="hidden xl:table-cell">Latest run</TableHead>
-            <TableHead className="text-right">Actions</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {jobs.map((job) => {
-            const schedule = job.settings?.schedule;
-            return (
-              <TableRow key={job.job_id} className="whitespace-nowrap">
-                <TableCell className="max-w-48 lg:max-w-64">
-                  <div className="truncate font-medium" title={jobName(job)}>
-                    {jobName(job)}
-                  </div>
-                  <div className="text-xs text-muted-foreground">ID {job.job_id}</div>
-                </TableCell>
-                <TableCell>
-                  <StatusBadge job={job} />
-                </TableCell>
-                <TableCell>
-                  <div
-                    className="flex items-center gap-2"
-                    title={schedule ? `${schedule.quartz_cron_expression} (${schedule.timezone_id})` : undefined}
-                  >
-                    <ScheduleBadge job={job} />
-                    {schedule && (
-                      <span className="hidden font-mono text-xs text-muted-foreground xl:inline">
-                        {schedule.quartz_cron_expression}
-                      </span>
-                    )}
-                  </div>
-                </TableCell>
-                <TableCell>
-                  {job.runs.length ? (
-                    <RunTimeline job={job} compact />
-                  ) : (
-                    <span className="text-xs text-muted-foreground">No runs yet</span>
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Job</TableHead>
+          <TableHead>Status</TableHead>
+          <TableHead>Schedule</TableHead>
+          <TableHead title="Newest on the right">Last 10 runs</TableHead>
+          <TableHead className="hidden xl:table-cell">Latest run</TableHead>
+          <TableHead className="text-right">Actions</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {jobs.map((job) => {
+          const schedule = job.settings?.schedule;
+          return (
+            <TableRow key={job.job_id} className="whitespace-nowrap">
+              <TableCell className="max-w-48 lg:max-w-64">
+                <div className="truncate font-medium" title={jobName(job)}>
+                  {jobName(job)}
+                </div>
+                <div className="text-xs text-muted-foreground">ID {job.job_id}</div>
+              </TableCell>
+              <TableCell>
+                <StatusBadge job={job} />
+              </TableCell>
+              <TableCell>
+                <div
+                  className="flex items-center gap-2"
+                  title={schedule ? `${schedule.quartz_cron_expression} (${schedule.timezone_id})` : undefined}
+                >
+                  <ScheduleBadge job={job} />
+                  {schedule && (
+                    <span className="hidden font-mono text-xs text-muted-foreground xl:inline">
+                      {schedule.quartz_cron_expression}
+                    </span>
                   )}
-                </TableCell>
-                <TableCell className="hidden text-xs text-muted-foreground xl:table-cell">{latestRun(job)}</TableCell>
-                <TableCell>
-                  <JobActions job={job} actions={actions} compact />
-                </TableCell>
-              </TableRow>
-            );
-          })}
-        </TableBody>
-      </Table>
-    </Card>
+                </div>
+              </TableCell>
+              <TableCell>
+                {job.runs.length ? (
+                  <RunTimeline job={job} compact />
+                ) : (
+                  <span className="text-xs text-muted-foreground">No runs yet</span>
+                )}
+              </TableCell>
+              <TableCell className="hidden text-xs text-muted-foreground xl:table-cell">{latestRun(job)}</TableCell>
+              <TableCell>
+                <JobActions job={job} actions={actions} compact />
+              </TableCell>
+            </TableRow>
+          );
+        })}
+      </TableBody>
+    </Table>
   );
 }
 
@@ -463,6 +524,7 @@ function JobDialog({
   open,
   onOpenChange,
   location,
+  initialGroup,
   groups,
   groupsLoading,
   groupsError,
@@ -471,6 +533,8 @@ function JobDialog({
   open: boolean;
   onOpenChange: (v: boolean) => void;
   location: Location;
+  /** Preselected group; the first group when empty. */
+  initialGroup: string;
   groups: Array<{
     ingestion_group: string;
     source_count: number;
@@ -483,7 +547,7 @@ function JobDialog({
 }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [ingestionGroup, setIngestionGroup] = useState('');
+  const [ingestionGroup, setIngestionGroup] = useState(initialGroup);
   const [scheduleEnabled, setScheduleEnabled] = useState(false);
   const [scheduleActive, setScheduleActive] = useState(true);
   const [gitUrl, setGitUrl] = useState('https://github.com/databricks-industry-solutions/watersync');
@@ -512,7 +576,6 @@ function JobDialog({
   }, [open, ingestionGroup, groups]);
   const selectedGroup = groups.find((group) => group.ingestion_group === ingestionGroup);
   const hasCdcPipeline = Boolean(selectedGroup?.enabled_incremental_source_count);
-  const tabCount = 5 + (hasCdcPipeline ? 1 : 0);
   // Leave the SDP Compute tab when it disappears after switching to a group without an SDP pipeline.
   useEffect(() => {
     if (tab === 'pipeline' && !hasCdcPipeline) setTab('compute');
@@ -578,7 +641,7 @@ function JobDialog({
           {groupsError && <ErrorState message={groupsError} />}
           <NodeTypeOptions nodeTypes={nodeTypes} />
           <Tabs value={tab} onValueChange={setTab} className="w-full">
-            <TabsList className={`grid w-full ${tabColumns[tabCount]}`}>
+            <TabsList className="flex h-auto w-full [&>button]:flex-auto [&>button]:px-3">
               <TabsTrigger value="job">Job configuration</TabsTrigger>
               <TabsTrigger value="source">Git source &amp; execution</TabsTrigger>
               <TabsTrigger value="compute">Job Compute</TabsTrigger>
@@ -757,7 +820,9 @@ function JobDialog({
                 onModeChange={setComputeMode}
                 performanceTarget={performanceTarget}
                 onPerformanceTargetChange={setPerformanceTarget}
-                performanceSharedWith={hasCdcPipeline && pipelineComputeMode === 'SERVERLESS' ? 'SDP Compute' : null}
+                performanceSharedWith={
+                  hasCdcPipeline && pipelineComputeMode === 'SERVERLESS' ? 'the SDP pipeline task' : null
+                }
                 nodeTypes={nodeTypes}
                 clusterNote="The planner and ingestion workers share this autoscaling job cluster. The SDP pipeline task uses its own pipeline compute."
               />
@@ -789,12 +854,34 @@ function JobDialog({
                       existing SDP pipeline ID is provided.
                     </p>
                   </div>
-                  {pipelineComputeMode === 'SERVERLESS' && (
+                  {/* Databricks has one serverless performance mode per job, covering the pipeline task too. It is
+                      edited where it is set: Job Compute when the job is serverless, otherwise here. */}
+                  {pipelineComputeMode === 'SERVERLESS' && computeMode === 'SERVERLESS' && (
+                    <div className="space-y-2">
+                      <Label>Serverless performance mode</Label>
+                      <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border bg-muted/30 px-3 py-2 text-sm">
+                        <span>
+                          <span className="font-medium">
+                            {performanceTarget === 'PERFORMANCE_OPTIMIZED' ? 'Performance optimized' : 'Standard'}
+                          </span>
+                          <span className="text-muted-foreground"> · set on the Job Compute tab</span>
+                        </span>
+                        <Button type="button" variant="outline" size="sm" onClick={() => setTab('compute')}>
+                          Change in Job Compute
+                        </Button>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Databricks has one serverless performance mode per job, and it covers the SDP pipeline task too,
+                        so the job and its pipeline always run with the same mode.
+                      </p>
+                    </div>
+                  )}
+                  {pipelineComputeMode === 'SERVERLESS' && computeMode !== 'SERVERLESS' && (
                     <PerformanceTargetField
                       id="pipeline-performance-target"
                       value={performanceTarget}
                       onChange={setPerformanceTarget}
-                      sharedWith={computeMode === 'SERVERLESS' ? 'Job Compute' : null}
+                      sharedWith={null}
                     />
                   )}
                   {pipelineComputeMode === 'CLASSIC' && (
@@ -879,7 +966,6 @@ function JobDialog({
 }
 
 // Literal class names so Tailwind keeps them.
-const tabColumns: Record<number, string> = { 5: 'grid-cols-5', 6: 'grid-cols-6' };
 
 function ScheduleDialog({ job, onClose, onSaved }: { job: JobRow | null; onClose: () => void; onSaved: () => void }) {
   const schedule = job?.settings?.schedule;

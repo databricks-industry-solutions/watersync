@@ -164,13 +164,14 @@ npx vitest run
 | `POST /api/config`, `DELETE /api/config`                                                | Save (insert, update or rename) or delete a config row        |
 | `PATCH /api/watermark`, `DELETE /api/watermark`                                         | Update or delete a table's watermark state                    |
 | `POST /api/source-tables`, `POST /api/source-columns`, `POST /api/source-columns-batch` | Source discovery                                              |
-| `GET /api/jobs`                                                                         | Visible jobs with their last 10 runs                          |
+| `GET /api/jobs?catalog=&schema=&group=…`                                                | The location's job of each listed group (at most 100), with its last 10 runs, and the groups without one |
 | `GET /api/node-types`                                                                   | Node types for compute settings, with a default               |
 | `POST /api/jobs`                                                                        | Create or update a group's job and CDC pipeline               |
 | `POST /api/jobs/:jobId/run`, `PATCH /api/jobs/:jobId/schedule`                          | Run a job (optionally as a full refresh), change its schedule |
 | `GET /api/export`, `POST /api/import`                                                   | Export or import a location's configuration                   |
 | `GET /api/latest-release`                                                               | Latest published GitHub release, for the new release notice   |
-| `GET /api/row-checks/job`, `POST /api/row-checks/job`                                   | Read (with its last 10 runs) or save the location's row check job |
+| `GET /api/row-checks/jobs`, `POST /api/row-checks/job`, `DELETE /api/row-checks/job`    | List the row check jobs of the location and its groups, or of the location and the `group` parameters given (each with its last 10 runs); save one, or delete one |
+| `POST /api/row-checks/job/run`                                                         | Run one row check job now with its own settings |
 | `POST /api/row-checks/run`                                                              | Start a basic or detailed row check, optionally for one table |
 
 ## Query caching
