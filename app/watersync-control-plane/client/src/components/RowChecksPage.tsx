@@ -173,6 +173,8 @@ export function RowChecksPage() {
   // The group and table lists each page on their own; both start again when a filter or the status changes.
   const tablePages = usePagination(`${filters.key}|${status}`);
   const groupPages = usePagination(status);
+  // The group jobs page on their own, following the group and the picked tables.
+  const jobPages = usePagination(`${group}|${picked.map((item) => item.group).join(',')}`);
   // Nothing selected: a summary per group. A group or a name search: its tables. Picked tables: only those.
   const level: DailyLevel = filtered ? 'table' : 'group';
   const [jobs, setJobs] = useState<RowCheckJob[]>([]);
@@ -361,13 +363,6 @@ export function RowChecksPage() {
       />
       {jobError && <ErrorState message={jobError} />}
       {runError && <ErrorState message={runError} />}
-      <RowCheckJobsCard
-        jobs={jobs}
-        loading={jobLoading}
-        location={location}
-        onEdit={setEditing}
-        onChanged={() => void loadJob()}
-      />
       <FilterBar
         location={location}
         revision={revision}
@@ -377,6 +372,16 @@ export function RowChecksPage() {
         enabledOnly
         pickNote=" (one chart color each)"
         onRefresh={refresh}
+      />
+      <RowCheckJobsCard
+        jobs={jobs}
+        loading={jobLoading}
+        location={location}
+        group={group}
+        picked={picked}
+        pages={jobPages}
+        onEdit={setEditing}
+        onChanged={() => void loadJob()}
       />
       <SummaryStrip summary={summary} jobs={jobs} loading={summaryLoading} filtered={filtered} />
       <RowCheckStatusMap
@@ -923,12 +928,19 @@ function RowCheckJobsCard({
   jobs,
   loading,
   location,
+  group,
+  picked,
+  pages,
   onEdit,
   onChanged,
 }: {
   jobs: RowCheckJob[];
   loading: boolean;
   location: Location;
+  /** The page filters: a group's jobs show when it is the filtered group or holds a picked table. */
+  group: string;
+  picked: PickedTable[];
+  pages: Pages;
   onEdit: (job: RowCheckJob | 'new') => void;
   /** After a job was run or deleted, to reload the jobs (and poll while the run is going). */
   onChanged: () => void;
@@ -965,6 +977,11 @@ function RowCheckJobsCard({
       setDeleting(null);
     }
   };
+  // Jobs of every group always show, first; the group jobs follow the filters and page.
+  const groups = picked.length ? new Set(picked.map((item) => item.group)) : group ? new Set([group]) : null;
+  const locationJobs = jobs.filter((job) => !job.ingestionGroup);
+  const groupJobs = jobs.filter((job) => job.ingestionGroup && (!groups || groups.has(job.ingestionGroup)));
+  const shown = [...locationJobs, ...groupJobs.slice(pages.page * pages.pageSize, (pages.page + 1) * pages.pageSize)];
   if (loading) return <Skeleton className="mb-6 h-32" />;
   return (
     <Card className="mb-6 gap-0 overflow-hidden py-0">
@@ -972,7 +989,8 @@ function RowCheckJobsCard({
         <CardTitle className="text-base">Row check jobs</CardTitle>
         <CardDescription>
           Each job runs a basic or a detailed check of every enabled table, for the whole location or one group, and
-          writes to <span className="font-mono">{fqn(location, '_watersync_row_checks')}</span>.
+          writes to <span className="font-mono">{fqn(location, '_watersync_row_checks')}</span>. Jobs of every group
+          always show; group jobs follow the group filter and the groups of the picked tables.
         </CardDescription>
       </CardHeader>
       {error && (
@@ -1008,7 +1026,14 @@ function RowCheckJobsCard({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {jobs.map((job) => {
+            {!shown.length && (
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={6} className="py-6 text-center text-sm text-muted-foreground">
+                  No row check job for the filtered groups.
+                </TableCell>
+              </TableRow>
+            )}
+            {shown.map((job) => {
               const latest = job.runs[0];
               const active = job.runs.some(isActive);
               return (
@@ -1106,6 +1131,16 @@ function RowCheckJobsCard({
             })}
           </TableBody>
         </Table>
+      )}
+      {groupJobs.length > 0 && (
+        <Pagination
+          total={groupJobs.length}
+          page={pages.page}
+          pageSize={pages.pageSize}
+          onPageChange={pages.setPage}
+          onPageSizeChange={pages.setPageSize}
+          noun="group jobs"
+        />
       )}
     </Card>
   );
