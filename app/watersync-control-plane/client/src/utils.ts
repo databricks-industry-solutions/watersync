@@ -43,6 +43,8 @@ export const fqn = (location: Location, table: string) => `${location.catalog}.$
 export const displayTime = (value: string | number | null | undefined) =>
   value ? new Date(typeof value === 'number' ? value : value).toLocaleString() : 'Never';
 
+// The end states of a job run that are not a success.
+export const failedStates = ['FAILED', 'TIMEDOUT', 'CANCELED', 'INTERNAL_ERROR'];
 export const runStatus = (run?: JobRun) => run?.state?.result_state ?? run?.state?.life_cycle_state ?? 'NEVER_RUN';
 
 export const runDuration = (run: JobRun) => {

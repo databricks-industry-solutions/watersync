@@ -141,6 +141,14 @@ body {
   color: var(--success);
   padding: 0.85rem 1rem;
 }
+.hero-health-danger {
+  background: color-mix(in oklch, var(--destructive) 12%, var(--card));
+  color: var(--destructive);
+}
+.hero-health-warning {
+  background: color-mix(in oklch, var(--warning) 16%, var(--card));
+  color: var(--warning-foreground);
+}
 .metric-card {
   position: relative;
   min-height: 9.5rem;

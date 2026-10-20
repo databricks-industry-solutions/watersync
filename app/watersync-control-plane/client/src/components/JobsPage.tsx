@@ -42,11 +42,12 @@ import {
   ToggleGroupItem,
   useAnalyticsQuery,
 } from '@databricks/appkit-ui/react';
-import { Clock3, ExternalLink, LayoutGrid, List, Loader2, Play, Plus, RefreshCw } from 'lucide-react';
+import { Clock3, ExternalLink, LayoutGrid, List, Play, Plus, RefreshCw } from 'lucide-react';
 import { api } from '../lib/api';
 import { reportError, useReportedFailure } from '../lib/logging';
 import type { JobRow, Location } from '../types';
-import { fqn, displayTime, runStatus, runDuration, formString } from '../utils';
+import { fqn, displayTime, runDuration, formString } from '../utils';
+import { RunTimeline, StatusBadge } from './JobRuns';
 import { useControl } from '../lib/control';
 import { PageTitle, ErrorState, ScheduleFields } from './shared';
 import { JobComputeFields, NodeTypeOptions, PerformanceTargetField, RunAsFields } from './JobFields';
@@ -316,66 +317,12 @@ const jobName = (job: JobRow) => job.settings?.name ?? `Job ${job.job_id}`;
 const fullRefreshPrompt =
   'Run a full refresh? Staging will be replaced with a fresh snapshot and CDC will reprocess from scratch.';
 
-const failedStates = ['FAILED', 'TIMEDOUT', 'CANCELED', 'INTERNAL_ERROR'];
-const activeStates = ['RUNNING', 'PENDING', 'QUEUED', 'TERMINATING', 'BLOCKED', 'WAITING_FOR_RETRY'];
-
-/** The latest run's state: green for success, red for a failure, a spinner while running. */
-function StatusBadge({ job }: { job: JobRow }) {
-  const status = runStatus(job.runs[0]);
-  const style =
-    status === 'SUCCESS'
-      ? 'check-status-match'
-      : failedStates.includes(status)
-        ? 'check-status-mismatch'
-        : activeStates.includes(status)
-          ? 'check-status-running'
-          : 'check-status-none';
-  const label = status.charAt(0) + status.slice(1).toLowerCase().replaceAll('_', ' ');
-  return (
-    <span className={`check-status ${style}`}>
-      {activeStates.includes(status) && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
-      {label}
-    </span>
-  );
-}
-
 function ScheduleBadge({ job }: { job: JobRow }) {
   const schedule = job.settings?.schedule;
   return (
     <Badge variant={schedule?.pause_status === 'UNPAUSED' ? 'secondary' : 'outline'}>
       {!schedule ? 'Manual only' : schedule.pause_status === 'UNPAUSED' ? 'Active' : 'Paused'}
     </Badge>
-  );
-}
-
-function RunTimeline({ job, compact = false }: { job: JobRow; compact?: boolean }) {
-  return (
-    <div
-      className={compact ? 'run-timeline run-timeline-compact' : 'run-timeline'}
-      aria-label={`Recent run status for ${job.settings?.name ?? `job ${job.job_id}`}`}
-    >
-      {[...job.runs].reverse().map((recentRun) => {
-        const status = runStatus(recentRun);
-        const label = `${status.replaceAll('_', ' ')} · ${displayTime(recentRun.start_time)} · ${runDuration(recentRun)}`;
-        return (
-          <a
-            key={recentRun.run_id}
-            className={`run-mark run-mark-${status.toLowerCase()}`}
-            title={label}
-            aria-label={label}
-            href={recentRun.run_url}
-            target="_blank"
-            rel="noreferrer"
-          >
-            {status === 'RUNNING' ? (
-              <RefreshCw className={compact ? 'h-3 w-3 animate-spin' : 'h-4 w-4 animate-spin'} aria-hidden="true" />
-            ) : (
-              <span>{status === 'SUCCESS' ? '✓' : '!'}</span>
-            )}
-          </a>
-        );
-      })}
-    </div>
   );
 }
 

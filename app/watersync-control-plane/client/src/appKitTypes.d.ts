@@ -75,6 +75,7 @@ declare module '@databricks/appkit-ui/react' {
         ingestion_group: StringParam;
         search: StringParam;
         tables: StringParam;
+        stale_hours: IntParam;
         refresh_token: IntParam;
       };
       result: Array<{
@@ -82,7 +83,65 @@ declare module '@databricks/appkit-ui/react' {
         enabled_count: number;
         group_count: number;
         failed_count: number;
+        success_count: number;
+        skipped_count: number;
+        full_refresh_count: number;
+        never_loaded_count: number;
+        stale_count: number;
         last_run_timestamp: string | null;
+      }>;
+    };
+    overview_attention: {
+      name: 'overview_attention';
+      parameters: {
+        config_table: StringParam;
+        watermark_table: StringParam;
+        ingestion_group: StringParam;
+        search: StringParam;
+        tables: StringParam;
+        stale_hours: IntParam;
+        refresh_token: IntParam;
+      };
+      result: Array<{
+        ingestion_group: string;
+        source_table_name: string;
+        ingestion_type: string;
+        status: string | null;
+        last_run_timestamp: string | null;
+        last_error: string | null;
+        reason: 'failed' | 'never_loaded' | 'stale';
+        total_count: number;
+      }>;
+    };
+    overview_groups: {
+      name: 'overview_groups';
+      parameters: {
+        config_table: StringParam;
+        watermark_table: StringParam;
+        row_check_table: StringParam;
+        ingestion_group: StringParam;
+        search: StringParam;
+        tables: StringParam;
+        stale_hours: IntParam;
+        page_size: IntParam;
+        page_offset: IntParam;
+        refresh_token: IntParam;
+      };
+      result: Array<{
+        ingestion_group: string;
+        table_count: number;
+        enabled_count: number;
+        failed_count: number;
+        never_loaded_count: number;
+        stale_count: number;
+        oldest_load: string | null;
+        latest_load: string | null;
+        match_count: number;
+        mismatch_count: number;
+        check_error_count: number;
+        unchecked_count: number;
+        last_checked_at: string | null;
+        total_count: number;
       }>;
     };
     ingestion_groups: {
