@@ -6,7 +6,9 @@ from pyspark.sql.functions import col, expr
 
 from watersync.common import quote_sql_string, resolve_staging_table_fqn, row_to_dict
 
-_METADATA_COLUMNS = ["_ingested_at", "_source_table", "_ingestion_group", "_ingestion_type"]
+_METADATA_COLUMNS = ["_source_table", "_ingestion_group", "_ingestion_type"]
+# Kept in the history table so users can see when a record was loaded; it must not open a new SCD2 version.
+_INGESTED_AT_COLUMN = "_ingested_at"
 _CSA_CONTROL_COLUMNS = ["_IS_DELETED", "_csa_update_dt"]
 
 
@@ -64,6 +66,7 @@ class CdcScd2PipelineBuilder:
             sequence_by=col(watermark_column),
             stored_as_scd_type="2",
             except_column_list=_METADATA_COLUMNS,
+            track_history_except_column_list=[_INGESTED_AT_COLUMN],
         )
 
     def register_incremental_csa_flow(self, history_table: str, flow_prefix: str, staging_table: str, staging_fqn: str, key_columns: list[str]) -> None:
@@ -83,6 +86,7 @@ class CdcScd2PipelineBuilder:
             apply_as_deletes = expr("_IS_DELETED IS TRUE"),
             stored_as_scd_type="2",
             except_column_list=_METADATA_COLUMNS + _CSA_CONTROL_COLUMNS,
+            track_history_except_column_list=[_INGESTED_AT_COLUMN],
         )
 
     def register_snapshot_flow(self, history_table: str, staging_fqn: str, key_columns: list[str]) -> None:
@@ -91,6 +95,7 @@ class CdcScd2PipelineBuilder:
             source=self.make_snapshot_source(staging_fqn, drop_columns=_METADATA_COLUMNS),
             keys=key_columns,
             stored_as_scd_type=2,
+            track_history_except_column_list=[_INGESTED_AT_COLUMN],
         )
 
     def build(self) -> None:
