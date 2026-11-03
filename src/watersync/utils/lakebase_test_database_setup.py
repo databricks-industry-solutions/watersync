@@ -248,35 +248,40 @@ class LakebaseTestDatabaseSetup:
         """
 
     def _csa_altered_rows_procedure_sql(self) -> str:
-        """Postgres mock of Epic's ESP_CR_ALTERED_ROWS changed-rows procedure.
+        """Postgres mock of Epic's EPIC_UTIL.ESP_CR_ALTERED_ROWS, with the parameters Epic documents.
 
-        Same parameters as Epic's 2020 header. It fills a session temp table with the
-        key columns plus CR_UPD_DATE for rows changed in [i_startdate, i_enddate).
-        i_includesource, i_includelinenum, i_columnnames, i_etlparameters and
+        Like Epic's, it leaves the changed keys and CR_UPD_DATE for [i_startdate, i_enddate) in
+        epic_util.cdc_<table>, replacing what the table held. It reads epic_util.csa_<table>;
+        i_reportdb, i_includesource, i_includelinenum, i_columnnames, i_skipupdatedate and
         i_includevaluelinecolumn are accepted but ignored.
         """
         return f"""
+            DROP PROCEDURE IF EXISTS {self.csa_schema}.esp_cr_altered_rows(
+                text, timestamp, timestamp, text, int, int, int, text, text, int, int);
+            DROP FUNCTION IF EXISTS {self.csa_schema}.esp_cr_altered_rows_select(text, timestamp, timestamp, int);
             CREATE OR REPLACE PROCEDURE {self.csa_schema}.esp_cr_altered_rows(
                 i_tablename text,
+                i_reportdb text,
                 i_startdate timestamp,
                 i_enddate timestamp,
-                i_temptablename text,
                 i_noduplicates int DEFAULT 0,
                 i_includesource int DEFAULT 0,
                 i_includelinenum int DEFAULT 0,
                 i_columnnames text DEFAULT '',
-                i_etlparameters text DEFAULT '',
                 i_skipupdatedate int DEFAULT 0,
                 i_includevaluelinecolumn int DEFAULT 0
             )
             LANGUAGE plpgsql AS $esp$
             DECLARE
-                csa_table   text := 'csa_' || lower(split_part(i_tablename, '.', -1));
-                key_list    text;
-                select_list text;
+                base      text := lower(split_part(i_tablename, '.', -1));
+                csa_table text := 'csa_' || base;
+                cdc_table text := 'cdc_' || base;
+                key_list  text;
+                key_defs  text;
             BEGIN
-                SELECT string_agg(quote_ident(column_name), ', ' ORDER BY ordinal_position)
-                INTO key_list
+                SELECT string_agg(quote_ident(column_name), ', ' ORDER BY ordinal_position),
+                       string_agg(quote_ident(column_name) || ' ' || data_type, ', ' ORDER BY ordinal_position)
+                INTO key_list, key_defs
                 FROM information_schema.columns
                 WHERE table_schema = '{self.csa_schema}'
                   AND table_name = csa_table
@@ -285,18 +290,18 @@ class LakebaseTestDatabaseSetup:
                     RAISE EXCEPTION 'No CSA table {self.csa_schema}.% for %', csa_table, i_tablename;
                 END IF;
 
-                select_list := key_list;
-                IF i_skipupdatedate = 0 THEN
-                    select_list := select_list || ', _update_dt AS cr_upd_date';
-                END IF;
-
-                EXECUTE format('DROP TABLE IF EXISTS pg_temp.%I', i_temptablename);
+                EXECUTE format('CREATE TABLE IF NOT EXISTS {self.csa_schema}.%I (%s, cr_upd_date timestamp)',
+                               cdc_table, key_defs);
+                EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON {self.csa_schema}.%I (%s)',
+                               cdc_table || '_keys', cdc_table, key_list);
+                EXECUTE format('DELETE FROM {self.csa_schema}.%I', cdc_table);
                 EXECUTE format(
-                    'CREATE TEMP TABLE %I AS SELECT %s%s FROM {self.csa_schema}.%I '
-                    'WHERE _update_dt >= %L AND _update_dt < %L%s',
-                    i_temptablename,
+                    'INSERT INTO {self.csa_schema}.%I (%s, cr_upd_date) SELECT %s%s, _update_dt '
+                    'FROM {self.csa_schema}.%I WHERE _update_dt >= %L AND _update_dt < %L%s',
+                    cdc_table,
+                    key_list,
                     CASE WHEN i_noduplicates = 1 THEN 'DISTINCT ON (' || key_list || ') ' ELSE '' END,
-                    select_list,
+                    key_list,
                     csa_table,
                     i_startdate,
                     i_enddate,
@@ -308,26 +313,28 @@ class LakebaseTestDatabaseSetup:
             $esp$
         """
 
-    def _csa_altered_rows_select_function_sql(self) -> str:
-        """Set-returning wrapper over esp_cr_altered_rows, one jsonb per temp-table row.
+    def _csa_altered_rows_run_function_sql(self) -> str:
+        """Calls esp_cr_altered_rows for [i_startdate, server clock - threshold) and returns that window end.
 
         The Postgres JDBC driver can't return a SELECT that follows a CALL in one statement,
-        so EpicStoredProcedureIngestionWorker reads Postgres sources through this function.
+        so EpicStoredProcedureIngestionWorker runs the mock through this function.
         """
         return f"""
-            CREATE OR REPLACE FUNCTION {self.csa_schema}.esp_cr_altered_rows_select(
+            CREATE OR REPLACE FUNCTION {self.csa_schema}.esp_cr_altered_rows_run(
                 i_tablename text,
+                i_reportdb text,
                 i_startdate timestamp,
-                i_enddate timestamp,
-                i_noduplicates int DEFAULT 0
-            ) RETURNS SETOF jsonb
+                i_threshold_minutes int,
+                i_includelinenum int
+            ) RETURNS text
             LANGUAGE plpgsql AS $esp$
             DECLARE
-                temp_table text := 'ws_chg_' || md5(random()::text || clock_timestamp()::text);
+                window_end timestamp := GREATEST(
+                    date_trunc('second', LOCALTIMESTAMP - make_interval(mins => i_threshold_minutes)), i_startdate);
             BEGIN
-                CALL {self.csa_schema}.esp_cr_altered_rows(i_tablename, i_startdate, i_enddate, temp_table, i_noduplicates);
-                RETURN QUERY EXECUTE format('SELECT to_jsonb(t) FROM pg_temp.%I t', temp_table);
-                EXECUTE format('DROP TABLE pg_temp.%I', temp_table);
+                CALL {self.csa_schema}.esp_cr_altered_rows(
+                    i_tablename, i_reportdb, i_startdate, window_end, 1, 0, i_includelinenum);
+                RETURN to_char(window_end, 'YYYY-MM-DD HH24:MI:SS');
             END;
             $esp$
         """
@@ -346,7 +353,7 @@ class LakebaseTestDatabaseSetup:
                 cur.execute(f"CREATE SCHEMA IF NOT EXISTS {self.csa_schema}")
                 cur.execute(self._csa_trigger_function_sql())
                 cur.execute(self._csa_altered_rows_procedure_sql())
-                cur.execute(self._csa_altered_rows_select_function_sql())
+                cur.execute(self._csa_altered_rows_run_function_sql())
                 for base_table, key_columns in self.EPIC_CSA_KEY_COLUMNS.items():
                     csa_table = self.csa_table_name(base_table)
                     key_ddl = ", ".join(f"{name} {dtype} NOT NULL" for name, dtype in key_columns.items())

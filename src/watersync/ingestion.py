@@ -18,7 +18,7 @@ from watersync.workers import (
     JdbcIngestionWorker,
     TimestampWatermarkIngestionWorker,
 )
-from watersync.workers.epic_stored_procedure import is_valid_procedure_name
+from watersync.workers.epic_stored_procedure import is_valid_column_names, is_valid_procedure_name
 
 EPIC_CHANGE_METHODS = ("csa_table", "stored_procedure")
 
@@ -41,10 +41,16 @@ def validate_epic_change_method(config: IngestionConfig) -> None:
         )
     if not config.key_column_list:
         raise ValueError(f"epic_change_method 'stored_procedure' for {table} requires key_columns")
-    if not is_valid_procedure_name(config.epic_change_procedure):
+    # An empty epic_change_procedure means Epic's documented EPIC_UTIL.ESP_CR_ALTERED_ROWS.
+    if config.epic_change_procedure and not is_valid_procedure_name(config.epic_change_procedure):
         raise ValueError(
-            f"epic_change_method 'stored_procedure' for {table} requires a valid epic_change_procedure "
-            f"(schema.procedure), got '{config.epic_change_procedure}'"
+            f"epic_change_procedure for {table} must be a procedure name (schema.procedure), "
+            f"got '{config.epic_change_procedure}'"
+        )
+    if not is_valid_column_names(config.epic_change_column_names):
+        raise ValueError(
+            f"epic_change_column_names for {table} must be comma-separated column names, "
+            f"got '{config.epic_change_column_names}'"
         )
 
 
@@ -65,9 +71,21 @@ class JdbcIngestionConfigRepository:
             filters.append(f"source_table_name = '{quote_sql_string(source_table_name)}'")
         # These columns were added later; tolerate config tables that have not been migrated yet.
         config_columns = {field.name for field in self.spark.table(self.runtime.config_table).schema.fields}
-        connection_database, epic_change_method, epic_change_procedure = (
+        (
+            connection_database,
+            epic_change_method,
+            epic_change_procedure,
+            epic_change_skip_update_date,
+            epic_change_column_names,
+        ) = (
             name if name in config_columns else f"NULL AS {name}"
-            for name in ("connection_database", "epic_change_method", "epic_change_procedure")
+            for name in (
+                "connection_database",
+                "epic_change_method",
+                "epic_change_procedure",
+                "epic_change_skip_update_date",
+                "epic_change_column_names",
+            )
         )
 
         query = f"""
@@ -83,6 +101,7 @@ class JdbcIngestionConfigRepository:
                 predicate_column,
                 epic_csa_enabled,
                 {epic_change_method}, {epic_change_procedure},
+                {epic_change_skip_update_date}, {epic_change_column_names},
                 auto_cdc_from_snapshot,
                 jdbc_url, jdbc_user, jdbc_secret_scope, jdbc_secret_key, uc_secret_name,
                 connection_name, {connection_database},
@@ -114,6 +133,8 @@ class JdbcIngestionConfigRepository:
                 epic_csa_enabled=bool(row_dict.get("epic_csa_enabled")),
                 epic_change_method=normalize_text(row_dict.get("epic_change_method")).lower() or "csa_table",
                 epic_change_procedure=normalize_text(row_dict.get("epic_change_procedure")),
+                epic_change_skip_update_date=bool(row_dict.get("epic_change_skip_update_date")),
+                epic_change_column_names=normalize_text(row_dict.get("epic_change_column_names")),
                 auto_cdc_from_snapshot=bool(row_dict.get("auto_cdc_from_snapshot")),
                 jdbc_url=normalize_text(row_dict.get("jdbc_url")),
                 jdbc_user=normalize_text(row_dict.get("jdbc_user")),

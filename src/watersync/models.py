@@ -63,6 +63,8 @@ class IngestionConfig:
     epic_csa_enabled: bool = False
     epic_change_method: str = "csa_table"
     epic_change_procedure: str = ""
+    epic_change_skip_update_date: bool = False
+    epic_change_column_names: str = ""
     auto_cdc_from_snapshot: bool = False
     jdbc_url: str = ""
     jdbc_user: str = ""

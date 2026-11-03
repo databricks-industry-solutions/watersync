@@ -25,8 +25,10 @@ The config table FQN follows the pattern `<catalog>.<schema>.jdbc_ingestion_conf
 | `partition_column` | STRING | Optional | Column for JDBC parallel read partitioning (e.g. `id`). Improves read parallelism. |
 | `predicate_column` | STRING | Optional | Column for predicate pushdown filtering. |
 | `epic_csa_enabled` | BOOLEAN | ✅ | `true` to use Epic CSA (Change Sequence Auditing) worker instead of timestamp watermark. **Only valid with `incremental` type**. When true, `watermark_column` is not required. |
-| `epic_change_method` | STRING | Optional | With `epic_csa_enabled = true`: `csa_table` (default when NULL, reads the CSA tables) or `stored_procedure` (calls Epic's changed-rows procedure). Not shown in the app yet; set it with SQL. |
-| `epic_change_procedure` | STRING | Conditional | Changed-rows procedure as `[database.]schema.procedure` (e.g. `dbo.ESP_CR_ALTERED_ROWS`; some versions name it `ESP_GET_CHANGED_ROWS`). **Required when `epic_change_method = 'stored_procedure'`**. |
+| `epic_change_method` | STRING | Optional | With `epic_csa_enabled = true`: `csa_table` (default when NULL, reads the CSA tables) or `stored_procedure` (uses Epic's stored procedure). Not shown in the app yet; set it with SQL. |
+| `epic_change_procedure` | STRING | Optional | With `stored_procedure`: Epic's stored procedure. NULL uses `EPIC_UTIL.ESP_CR_ALTERED_ROWS`. |
+| `epic_change_skip_update_date` | BOOLEAN | Optional | With `stored_procedure`: `true` doesn't ask the procedure for each row's update time. |
+| `epic_change_column_names` | STRING | Optional | With `stored_procedure`: comma-separated columns; only changes to them are read. |
 | `auto_cdc_from_snapshot` | BOOLEAN | ✅ | `true` to derive CDC changes from full snapshots. **Only valid with `full` type**. Requires `key_columns` and `staging_table_fqn`. |
 | `jdbc_url` | STRING | Conditional | JDBC connection URL. **Required if `connection_name` is NULL**. See connection section below. |
 | `jdbc_user` | STRING | Conditional | JDBC username. **Required if using direct JDBC (no `connection_name`)**. |
@@ -126,7 +128,7 @@ Only new/changed rows are read each run. Requires **one** of these change-detect
 |----------|-----------------|-------------|
 | **Timestamp watermark** | `key_columns` + `watermark_column`, `epic_csa_enabled = false` | Source has a reliable `updated_at` / `modified_date` column |
 | **Epic CSA** | `key_columns`, `epic_csa_enabled = true` | Source supports Epic Change Sequence Auditing (no watermark column needed) |
-| **Epic stored procedure** | `key_columns`, `epic_csa_enabled = true`, `epic_change_method = 'stored_procedure'`, `epic_change_procedure` | Epic SQL Server source where Epic's changed-rows procedure is the supported interface instead of reading CSA tables directly |
+| **Epic stored procedure** | `key_columns`, `epic_csa_enabled = true`, `epic_change_method = 'stored_procedure'` | Epic source loaded through Epic's stored procedure instead of the CSA tables |
 
 ### `full`
 
@@ -153,7 +155,8 @@ The ingestion framework validates every config row at runtime. These are the rul
 7. **`auto_cdc_from_snapshot` requires `ingestion_type = 'full'`** — cannot be true for `incremental`.
 8. **`auto_cdc_from_snapshot` requires `staging_table_fqn` and `key_columns`**.
 9. **`epic_change_method` must be `csa_table` or `stored_procedure`** (NULL means `csa_table`).
-10. **`stored_procedure` requires `epic_csa_enabled = true`, `ingestion_type = 'incremental'`, `key_columns` and a valid `epic_change_procedure`** (letters, digits, `_`, `$`, `#`, up to three dot-separated parts).
+10. **`stored_procedure` requires `epic_csa_enabled = true`, `ingestion_type = 'incremental'` and `key_columns`**. `epic_change_procedure`, when set, must be a procedure name (letters, digits, `_`, `$`, `#`, up to three dot-separated parts).
+11. **`epic_change_column_names` must be empty or comma-separated column names**.
 
 ### Format validation
 9. **`target_table_fqn` must be three-part** — matches `X.Y.Z` pattern.
@@ -281,7 +284,7 @@ After inserting the config row, remind the user to:
 | `requires watermark_column` | Incremental without CSA and no watermark column | Set `watermark_column` or enable `epic_csa_enabled` |
 | `EPIC CSA requires incremental ingestion` | `epic_csa_enabled = true` with `ingestion_type = 'full'` | Change type to `incremental` |
 | `unsupported epic_change_method` | Value other than `csa_table` / `stored_procedure` | Fix the value or set it to NULL |
-| `epic_change_method 'stored_procedure' ... requires` | Missing CSA flag, keys, procedure, or not incremental | Set the missing field |
+| `epic_change_method 'stored_procedure' ... requires` | Missing CSA flag or keys, or not incremental | Set the missing field |
 | `Snapshot CDC requires full ingestion` | `auto_cdc_from_snapshot = true` with `incremental` | Change type to `full` |
 | `Snapshot CDC requires key columns` | `auto_cdc_from_snapshot = true` without keys | Add `key_columns` |
 | `Snapshot CDC requires a staging table` | `auto_cdc_from_snapshot = true` without staging FQN | Add `staging_table_fqn` |

@@ -50,6 +50,8 @@ class UnityCatalogSetupTest(unittest.TestCase):
         UnityCatalogSetup(spark, catalog="main", schema="watersync").create_config_table()
         self.assertIn("epic_change_method STRING", spark.statements[0])
         self.assertIn("epic_change_procedure STRING", spark.statements[0])
+        self.assertIn("epic_change_skip_update_date BOOLEAN", spark.statements[0])
+        self.assertIn("epic_change_column_names STRING", spark.statements[0])
 
     def test_existing_config_table_gets_epic_change_columns_added(self) -> None:
         spark = FakeSpark(
