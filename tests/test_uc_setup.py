@@ -45,6 +45,22 @@ class UnityCatalogSetupTest(unittest.TestCase):
         self.assertEqual(len(alter), 1)
         self.assertIn("connection_database STRING", alter[0])
 
+    def test_config_table_includes_epic_change_columns(self) -> None:
+        spark = FakeSpark(existing_config_columns=[])
+        UnityCatalogSetup(spark, catalog="main", schema="watersync").create_config_table()
+        self.assertIn("epic_change_method STRING", spark.statements[0])
+        self.assertIn("epic_change_procedure STRING", spark.statements[0])
+
+    def test_existing_config_table_gets_epic_change_columns_added(self) -> None:
+        spark = FakeSpark(
+            existing_config_columns=["ingestion_group", "source_table_name", "uc_secret_name", "connection_database"]
+        )
+        UnityCatalogSetup(spark, catalog="main", schema="watersync").create_config_table()
+        alter = [statement for statement in spark.statements if statement.startswith("ALTER TABLE")]
+        self.assertEqual(len(alter), 1)
+        self.assertIn("epic_change_method STRING", alter[0])
+        self.assertIn("epic_change_procedure STRING", alter[0])
+
     def test_watermark_table_is_not_replaced(self) -> None:
         spark = FakeSpark(existing_config_columns=[])
         UnityCatalogSetup(spark, catalog="main", schema="watersync").create_watermark_state_table()

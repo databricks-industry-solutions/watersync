@@ -14,11 +14,38 @@ from watersync.common import (
 from watersync.models import IngestionConfig, JdbcRuntimeSettings
 from watersync.workers import (
     EpicCsaIngestionWorker,
+    EpicStoredProcedureIngestionWorker,
     JdbcIngestionWorker,
     TimestampWatermarkIngestionWorker,
 )
+from watersync.workers.epic_stored_procedure import is_valid_procedure_name
+
+EPIC_CHANGE_METHODS = ("csa_table", "stored_procedure")
 
 logger = logging.getLogger(__name__)
+
+
+def validate_epic_change_method(config: IngestionConfig) -> None:
+    table = config.source_table_name
+    if config.epic_change_method not in EPIC_CHANGE_METHODS:
+        raise ValueError(
+            f"Config row for {table} has unsupported epic_change_method "
+            f"'{config.epic_change_method}' (expected one of {', '.join(EPIC_CHANGE_METHODS)})"
+        )
+    if config.epic_change_method != "stored_procedure":
+        return
+    if not config.epic_csa_enabled or config.ingestion_type != "incremental":
+        raise ValueError(
+            f"epic_change_method 'stored_procedure' for {table} requires epic_csa_enabled = true "
+            f"and ingestion_type = 'incremental'"
+        )
+    if not config.key_column_list:
+        raise ValueError(f"epic_change_method 'stored_procedure' for {table} requires key_columns")
+    if not is_valid_procedure_name(config.epic_change_procedure):
+        raise ValueError(
+            f"epic_change_method 'stored_procedure' for {table} requires a valid epic_change_procedure "
+            f"(schema.procedure), got '{config.epic_change_procedure}'"
+        )
 
 
 class JdbcIngestionConfigRepository:
@@ -36,10 +63,11 @@ class JdbcIngestionConfigRepository:
             filters.append(f"ingestion_group = '{quote_sql_string(ingestion_group)}'")
         if source_table_name:
             filters.append(f"source_table_name = '{quote_sql_string(source_table_name)}'")
-        # connection_database was added later; tolerate config tables that have not been migrated yet.
+        # These columns were added later; tolerate config tables that have not been migrated yet.
         config_columns = {field.name for field in self.spark.table(self.runtime.config_table).schema.fields}
-        connection_database = (
-            "connection_database" if "connection_database" in config_columns else "NULL AS connection_database"
+        connection_database, epic_change_method, epic_change_procedure = (
+            name if name in config_columns else f"NULL AS {name}"
+            for name in ("connection_database", "epic_change_method", "epic_change_procedure")
         )
 
         query = f"""
@@ -54,6 +82,7 @@ class JdbcIngestionConfigRepository:
                 partition_column,
                 predicate_column,
                 epic_csa_enabled,
+                {epic_change_method}, {epic_change_procedure},
                 auto_cdc_from_snapshot,
                 jdbc_url, jdbc_user, jdbc_secret_scope, jdbc_secret_key, uc_secret_name,
                 connection_name, {connection_database},
@@ -83,6 +112,8 @@ class JdbcIngestionConfigRepository:
                 partition_column=normalize_text(row_dict.get("partition_column")),
                 predicate_column=normalize_text(row_dict.get("predicate_column")),
                 epic_csa_enabled=bool(row_dict.get("epic_csa_enabled")),
+                epic_change_method=normalize_text(row_dict.get("epic_change_method")).lower() or "csa_table",
+                epic_change_procedure=normalize_text(row_dict.get("epic_change_procedure")),
                 auto_cdc_from_snapshot=bool(row_dict.get("auto_cdc_from_snapshot")),
                 jdbc_url=normalize_text(row_dict.get("jdbc_url")),
                 jdbc_user=normalize_text(row_dict.get("jdbc_user")),
@@ -91,7 +122,9 @@ class JdbcIngestionConfigRepository:
                 uc_secret_name=normalize_text(row_dict.get("uc_secret_name")),
                 connection_name=normalize_text(row_dict.get("connection_name")),
                 connection_database=normalize_text(row_dict.get("connection_database")),
-                watermark_threshold_minutes=int(row_dict.get("watermark_threshold_minutes") or 5),
+                watermark_threshold_minutes=int(
+                    5 if row_dict.get("watermark_threshold_minutes") is None else row_dict["watermark_threshold_minutes"]
+                ),
                 fetch_size=int(row_dict.get("fetch_size") or 10000),
                 num_partitions=int(row_dict.get("num_partitions") or 8),
             )
@@ -121,6 +154,7 @@ class JdbcIngestionConfigRepository:
                 raise ValueError(
                     f"Incremental config row for {config.source_table_name} requires watermark_column"
                 )
+            validate_epic_change_method(config)
             configs.append(config)
         logger.info(
             "[CONFIG] Loaded %d config(s)  group=%s  table_filter=%s",
@@ -138,6 +172,8 @@ class JdbcIngestionOrchestrator:
         self.repository = JdbcIngestionConfigRepository(spark=spark, runtime=runtime)
 
     def build_worker(self, config: IngestionConfig) -> JdbcIngestionWorker:
+        if config.epic_csa_enabled and config.epic_change_method == "stored_procedure":
+            return EpicStoredProcedureIngestionWorker(self.spark, self.runtime, config)
         if config.epic_csa_enabled:
             return EpicCsaIngestionWorker(self.spark, self.runtime, config)
         return TimestampWatermarkIngestionWorker(self.spark, self.runtime, config)
@@ -196,6 +232,7 @@ class JdbcIngestionOrchestrator:
 
 __all__ = [
     "EpicCsaIngestionWorker",
+    "EpicStoredProcedureIngestionWorker",
     "JdbcIngestionConfigRepository",
     "JdbcIngestionOrchestrator",
     "JdbcIngestionWorker",

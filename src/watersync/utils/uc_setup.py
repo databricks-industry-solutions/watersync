@@ -41,6 +41,8 @@ class UnityCatalogSetup:
               partition_column STRING COMMENT 'Numeric JDBC partition column',
               predicate_column STRING COMMENT 'String JDBC predicate-partition column',
               epic_csa_enabled BOOLEAN COMMENT 'True when EPIC CSA mode is enabled',
+              epic_change_method STRING COMMENT 'EPIC change source: csa_table (default) or stored_procedure',
+              epic_change_procedure STRING COMMENT 'EPIC changed-rows stored procedure, e.g. dbo.ESP_CR_ALTERED_ROWS',
               auto_cdc_from_snapshot BOOLEAN COMMENT 'Use snapshot CDC for full-load sources',
               jdbc_url STRING COMMENT 'JDBC URL; leave empty when using a UC connection',
               jdbc_user STRING COMMENT 'JDBC username',
@@ -74,6 +76,8 @@ class UnityCatalogSetup:
             "watermark_threshold_minutes": "INT COMMENT 'Delay behind current time for incremental cutoffs'",
             "fetch_size": "INT COMMENT 'JDBC fetch size'",
             "num_partitions": "INT COMMENT 'JDBC parallelism'",
+            "epic_change_method": "STRING COMMENT 'EPIC change source: csa_table (default) or stored_procedure'",
+            "epic_change_procedure": "STRING COMMENT 'EPIC changed-rows stored procedure, e.g. dbo.ESP_CR_ALTERED_ROWS'",
         }
         missing = [f"{name} {ddl}" for name, ddl in additions.items() if name not in existing]
         if missing:

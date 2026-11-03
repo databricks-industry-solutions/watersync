@@ -5,6 +5,7 @@ from watersync.config_planner import (
 from watersync.cdc_pipeline import CdcScd2PipelineBuilder, build_pipeline_from_spark_conf
 from watersync.ingestion import (
     EpicCsaIngestionWorker,
+    EpicStoredProcedureIngestionWorker,
     JdbcIngestionOrchestrator,
     JdbcIngestionWorker,
     TimestampWatermarkIngestionWorker,
@@ -24,6 +25,7 @@ from watersync.utils import (
 __all__ = [
     "CdcScd2PipelineBuilder",
     "EpicCsaIngestionWorker",
+    "EpicStoredProcedureIngestionWorker",
     "IngestionConfig",
     "IngestionConfigPlanner",
     "IngestionJobProvisioner",

@@ -14,6 +14,8 @@
 | `partition_column` | STRING | no | Numeric column for parallel JDBC partitioning |
 | `predicate_column` | STRING | no | String column for predicate-based parallel reads (requires `jdbc_url`) |
 | `epic_csa_enabled` | BOOLEAN | no | Use the EPIC CSA worker (incremental only) |
+| `epic_change_method` | STRING | no | With `epic_csa_enabled`: `csa_table` (default, read the CSA tables) or `stored_procedure` (call Epic's changed-rows procedure) |
+| `epic_change_procedure` | STRING | yes* | Changed-rows procedure as `[database.]schema.procedure`, e.g. `dbo.ESP_CR_ALTERED_ROWS` (*required for `stored_procedure`) |
 | `auto_cdc_from_snapshot` | BOOLEAN | no | For `full` sources, stage each snapshot and maintain SCD Type 2 history in the target |
 | `jdbc_url` | STRING | one of* | JDBC URL to the source (*set `jdbc_url` or `connection_name`; at least one is required) |
 | `jdbc_user` | STRING | no | JDBC username |
@@ -51,6 +53,18 @@ VALUES
    'incremental', 'EVENT_ID', 'UPDATE_DATE', false,
    false, 'clarity_conn', 5, 10000, 8, current_timestamp(), true);
 ```
+
+To read an EPIC table through Epic's changed-rows stored procedure instead of the CSA tables, set the two `epic_change_*` columns on an EPIC CSA row. The Control Plane app doesn't show them yet, so set them with SQL:
+
+```sql
+UPDATE main.watersync.jdbc_ingestion_config
+SET epic_change_method = 'stored_procedure',
+    epic_change_procedure = 'dbo.ESP_CR_ALTERED_ROWS',
+    update_dttm = current_timestamp()
+WHERE ingestion_group = 'epic' AND source_table_name = 'dbo.PAT_ENC';
+```
+
+Run `UnityCatalogSetup.create_config_table()` (or the notebook's `setup_uc` action) first on an existing config table, to add the two columns.
 
 ## JDBC Connection Options
 

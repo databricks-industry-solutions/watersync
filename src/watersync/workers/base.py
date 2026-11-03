@@ -154,12 +154,16 @@ class JdbcIngestionWorker(ABC):
         partition_column: str | None = None,
         lower_bound: int | None = None,
         upper_bound: int | None = None,
+        prepare_query: str | None = None,
     ):
         reader = (
             self.spark.read.format("jdbc")
             .option("dbtable", dbtable)
             .options(**self.config.jdbc_properties)
         )
+        if prepare_query:
+            # Prefixed to every query Spark sends on the same connection (schema probe and data read).
+            reader = reader.option("prepareQuery", prepare_query)
         if self.config.jdbc_url:
             reader = reader.option("url", self.config.jdbc_url)
         else:

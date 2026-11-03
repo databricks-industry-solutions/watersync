@@ -61,6 +61,8 @@ class IngestionConfig:
     partition_column: str
     predicate_column: str
     epic_csa_enabled: bool = False
+    epic_change_method: str = "csa_table"
+    epic_change_procedure: str = ""
     auto_cdc_from_snapshot: bool = False
     jdbc_url: str = ""
     jdbc_user: str = ""

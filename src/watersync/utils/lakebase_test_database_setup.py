@@ -204,7 +204,7 @@ class LakebaseTestDatabaseSetup:
         return f"{self.csa_schema}.csa_{base_table.split('.')[-1].lower()}"
 
     def _csa_trigger_function_sql(self) -> str:
-        """PL/pgSQL trigger that writes one CSA event row per DML statement."""
+        """PL/pgSQL trigger that writes one CSA event row per affected row."""
         return f"""
             CREATE OR REPLACE FUNCTION {self.csa_schema}.record_csa_change() RETURNS trigger
             LANGUAGE plpgsql AS $csa$
@@ -247,6 +247,91 @@ class LakebaseTestDatabaseSetup:
             $csa$
         """
 
+    def _csa_altered_rows_procedure_sql(self) -> str:
+        """Postgres mock of Epic's ESP_CR_ALTERED_ROWS changed-rows procedure.
+
+        Same parameters as Epic's 2020 header. It fills a session temp table with the
+        key columns plus CR_UPD_DATE for rows changed in [i_startdate, i_enddate).
+        i_includesource, i_includelinenum, i_columnnames, i_etlparameters and
+        i_includevaluelinecolumn are accepted but ignored.
+        """
+        return f"""
+            CREATE OR REPLACE PROCEDURE {self.csa_schema}.esp_cr_altered_rows(
+                i_tablename text,
+                i_startdate timestamp,
+                i_enddate timestamp,
+                i_temptablename text,
+                i_noduplicates int DEFAULT 0,
+                i_includesource int DEFAULT 0,
+                i_includelinenum int DEFAULT 0,
+                i_columnnames text DEFAULT '',
+                i_etlparameters text DEFAULT '',
+                i_skipupdatedate int DEFAULT 0,
+                i_includevaluelinecolumn int DEFAULT 0
+            )
+            LANGUAGE plpgsql AS $esp$
+            DECLARE
+                csa_table   text := 'csa_' || lower(split_part(i_tablename, '.', -1));
+                key_list    text;
+                select_list text;
+            BEGIN
+                SELECT string_agg(quote_ident(column_name), ', ' ORDER BY ordinal_position)
+                INTO key_list
+                FROM information_schema.columns
+                WHERE table_schema = '{self.csa_schema}'
+                  AND table_name = csa_table
+                  AND column_name NOT IN ('csa_event_id', '_is_deleted', '_update_dt', '_timestamp_extract_key');
+                IF key_list IS NULL THEN
+                    RAISE EXCEPTION 'No CSA table {self.csa_schema}.% for %', csa_table, i_tablename;
+                END IF;
+
+                select_list := key_list;
+                IF i_skipupdatedate = 0 THEN
+                    select_list := select_list || ', _update_dt AS cr_upd_date';
+                END IF;
+
+                EXECUTE format('DROP TABLE IF EXISTS pg_temp.%I', i_temptablename);
+                EXECUTE format(
+                    'CREATE TEMP TABLE %I AS SELECT %s%s FROM {self.csa_schema}.%I '
+                    'WHERE _update_dt >= %L AND _update_dt < %L%s',
+                    i_temptablename,
+                    CASE WHEN i_noduplicates = 1 THEN 'DISTINCT ON (' || key_list || ') ' ELSE '' END,
+                    select_list,
+                    csa_table,
+                    i_startdate,
+                    i_enddate,
+                    CASE WHEN i_noduplicates = 1
+                        THEN ' ORDER BY ' || key_list || ', _update_dt DESC, _timestamp_extract_key DESC'
+                        ELSE '' END
+                );
+            END;
+            $esp$
+        """
+
+    def _csa_altered_rows_select_function_sql(self) -> str:
+        """Set-returning wrapper over esp_cr_altered_rows, one jsonb per temp-table row.
+
+        The Postgres JDBC driver can't return a SELECT that follows a CALL in one statement,
+        so EpicStoredProcedureIngestionWorker reads Postgres sources through this function.
+        """
+        return f"""
+            CREATE OR REPLACE FUNCTION {self.csa_schema}.esp_cr_altered_rows_select(
+                i_tablename text,
+                i_startdate timestamp,
+                i_enddate timestamp,
+                i_noduplicates int DEFAULT 0
+            ) RETURNS SETOF jsonb
+            LANGUAGE plpgsql AS $esp$
+            DECLARE
+                temp_table text := 'ws_chg_' || md5(random()::text || clock_timestamp()::text);
+            BEGIN
+                CALL {self.csa_schema}.esp_cr_altered_rows(i_tablename, i_startdate, i_enddate, temp_table, i_noduplicates);
+                RETURN QUERY EXECUTE format('SELECT to_jsonb(t) FROM pg_temp.%I t', temp_table);
+                EXECUTE format('DROP TABLE pg_temp.%I', temp_table);
+            END;
+            $esp$
+        """
+
     def create_epic_csa_tables(self) -> None:
         """Create epic_util.csa_<table> shadow tables plus the triggers that fill them.
 
@@ -260,6 +345,8 @@ class LakebaseTestDatabaseSetup:
             with conn.cursor() as cur:
                 cur.execute(f"CREATE SCHEMA IF NOT EXISTS {self.csa_schema}")
                 cur.execute(self._csa_trigger_function_sql())
+                cur.execute(self._csa_altered_rows_procedure_sql())
+                cur.execute(self._csa_altered_rows_select_function_sql())
                 for base_table, key_columns in self.EPIC_CSA_KEY_COLUMNS.items():
                     csa_table = self.csa_table_name(base_table)
                     key_ddl = ", ".join(f"{name} {dtype} NOT NULL" for name, dtype in key_columns.items())
@@ -337,15 +424,21 @@ class LakebaseTestDatabaseSetup:
                     )
         return status
 
-    def epic_csa_config_rows(self) -> list[dict[str, str]]:
-        """Ingestion-config rows for CSA-driven incremental ingestion of the test tables."""
+    def epic_csa_config_rows(self, epic_change_method: str = "csa_table") -> list[dict[str, str]]:
+        """Ingestion-config rows for CSA-driven incremental ingestion of the test tables.
+
+        epic_change_method="stored_procedure" reads through the esp_cr_altered_rows mock instead.
+        """
         settings = self.jdbc_settings()
+        procedure = f"{self.csa_schema}.esp_cr_altered_rows" if epic_change_method == "stored_procedure" else ""
         return [
             {
                 "source_table_name": f"dbo.{base_table}",
                 "csa_table_name": self.csa_table_name(base_table),
                 "ingestion_type": "incremental",
                 "epic_csa_enabled": "true",
+                "epic_change_method": epic_change_method,
+                "epic_change_procedure": procedure,
                 "key_columns": ",".join(key_columns),
                 "watermark_column": "",
                 "partition_column": next(iter(key_columns)),
