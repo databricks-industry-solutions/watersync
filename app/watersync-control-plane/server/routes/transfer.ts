@@ -18,13 +18,14 @@ export function registerTransferRoutes(app: Application) {
     apiRoute('config_import', async (req, res) => {
       const body = importPayloadSchema.parse(req.body);
       const entries = validateImport(body);
-      const groups = importSummary(entries.configs, entries.jobs);
+      const groups = importSummary(entries.configs, entries.jobs, entries.rowCheckJobs);
+      const counts = { jobCount: entries.jobs.length, rowCheckJobCount: entries.rowCheckJobs.length };
       if (body.dryRun) {
-        res.json({ dryRun: true, configCount: entries.configs.length, jobCount: entries.jobs.length, groups });
+        res.json({ dryRun: true, configCount: entries.configs.length, ...counts, groups });
         return;
       }
       const result = await importConfiguration(body.catalog, body.schema, entries, body);
-      res.json({ dryRun: false, jobCount: entries.jobs.length, groups, ...result });
+      res.json({ dryRun: false, ...counts, groups, ...result });
     })
   );
 }

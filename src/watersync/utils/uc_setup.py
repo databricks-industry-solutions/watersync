@@ -22,6 +22,10 @@ class UnityCatalogSetup:
         return f"{self.schema_fqn}.jdbc_ingestion_watermark"
 
     @property
+    def row_check_table(self) -> str:
+        return f"{self.schema_fqn}._watersync_row_checks"
+
+    @property
     def log_table(self) -> str:
         return f"{self.schema_fqn}.watersync_logs"
 
@@ -91,6 +95,11 @@ class UnityCatalogSetup:
             COMMENT 'ZeroBus-backed structured log table for watersync runs'
         """)
 
+    def create_row_check_table(self) -> None:
+        from watersync.row_check import RowCheckRunner
+
+        RowCheckRunner.create_results_table(self.spark, self.row_check_table)
+
     def create_watermark_state_table(self) -> None:
         self.spark.sql(f"""
             CREATE TABLE IF NOT EXISTS IDENTIFIER('{self.state_table}') (
@@ -129,5 +138,6 @@ class UnityCatalogSetup:
         self.create_config_table()
         self.create_watermark_state_table()
         self.create_log_table()
+        self.create_row_check_table()
         if truncate_existing:
             self.truncate_managed_objects()

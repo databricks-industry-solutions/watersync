@@ -1,6 +1,7 @@
 import migration_001 from './001_create_tables.js';
 import migration_002 from './001_add_uc_secret_name.js';
 import migration_003 from './003_add_connection_database.js';
+import migration_004 from './004_create_row_checks.js';
 
 /**
  * Context passed to every migration so it can run SQL and log progress
@@ -23,7 +24,7 @@ export type Migration = {
 };
 
 /** Ordered list of all migrations. New migrations must be appended here. */
-export const migrations: Migration[] = [migration_001, migration_002, migration_003];
+export const migrations: Migration[] = [migration_001, migration_002, migration_003, migration_004];
 
 const migrationsTable = '_watersync_migrations';
 

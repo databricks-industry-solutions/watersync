@@ -4,7 +4,7 @@ import logging
 
 from pyspark.sql import functions as F
 
-from watersync.common import quote_sql_string
+from watersync.common import epic_csa_table_name, quote_sql_string
 from watersync.models import ReadResult
 from watersync.sql_dialect import sql_bigint_cast
 from watersync.workers.base import JdbcIngestionWorker
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 class EpicCsaIngestionWorker(JdbcIngestionWorker):
     def derive_csa_table_name(self) -> str:
-        return f"epic_util.csa_{self.config.source_table_name.split('.')[-1].lower()}"
+        return epic_csa_table_name(self.config.source_table_name)
 
     def get_last_watermark(self) -> str:
         row = self.spark.sql(

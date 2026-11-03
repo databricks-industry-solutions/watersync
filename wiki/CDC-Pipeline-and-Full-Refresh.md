@@ -2,7 +2,7 @@
 
 ## CDC SCD2 Pipeline
 
-`pipeline_bootstrap.py` is the entry point of the Lakeflow Spark Declarative Pipeline, which runs on serverless or, when created from the app with classic SDP compute, on a classic cluster (see [Jobs created by the app](Control-Plane-App.md#jobs-created-by-the-app)). It reads `pipeline.configuration_fqn` and `pipeline.ingestion_group` from the pipeline configuration and, for every enabled row, creates a Silver streaming table at `target_table_fqn` clustered by `key_columns`, fed from the Bronze staging table:
+`pipeline_bootstrap.py` is the entry point of the Lakeflow Spark Declarative Pipeline, which runs on serverless or, when created from the app with classic SDP compute, on a classic cluster (see [Jobs created by the app](Control-Plane-App#jobs-created-by-the-app)). It reads `pipeline.configuration_fqn` and `pipeline.ingestion_group` from the pipeline configuration and, for every enabled row, creates a Silver streaming table at `target_table_fqn` clustered by `key_columns`, fed from the Bronze staging table:
 
 | Source type | Flow |
 |---|---|

@@ -22,6 +22,43 @@ Connection settings come from each config row, not from `JdbcRuntimeSettings`. T
 
 `notebooks/Watersync Notebook Runner` wraps the same calls behind widgets (`plan_configs`, `run_ingestion`, `create_job`, `setup_uc`, `setup_lakebase`).
 
+### Structured logs with ZeroBus
+
+Every `watersync.*` logger can also stream its records to a Delta table through ZeroBus Ingest, so a run can be inspected with SQL after it ends. This is opt-in: the generated jobs and notebooks do not turn it on. Install the extra (`%pip install "watersync[zerobus]"`) and wrap the run:
+
+```python
+from watersync.utils import setup_watersync_logging
+
+handler = setup_watersync_logging(
+    server_endpoint="https://<id>.zerobus.<region>.cloud.databricks.com",
+    workspace_url="https://<workspace>.cloud.databricks.com",
+    table_name="main.watersync.watersync_logs",  # created by UnityCatalogSetup.create_all()
+    client_id=dbutils.secrets.get(scope="watersync", key="zb_client_id"),
+    client_secret=dbutils.secrets.get(scope="watersync", key="zb_client_secret"),
+)
+try:
+    JdbcIngestionOrchestrator(spark=spark, runtime=runtime).run_selected_ingestion()
+finally:
+    handler.close()  # flushes and closes the stream
+```
+
+- **Authentication**, first match wins:
+  - `client_id` and `client_secret` of a service principal (OAuth M2M), which works on serverless and classic compute and is recommended;
+  - `token_provider`, a function returning a bearer token on each call, which works on classic interactive clusters;
+  - neither, which falls back to the runtime's OAuth credentials, for jobs that run as a service principal.
+- **Sending is fire-and-forget,** so logging never blocks ingestion. `console=True` (the default) also prints records to the notebook. Records are filtered by `level` (default `INFO`), and `run_id` is generated when not given (read it from `handler.run_id`).
+- **Table layout:** each record is one row of `run_id STRING`, `log_timestamp STRING` (UTC, ISO 8601) and `payload VARIANT`. `payload` holds `level`, `logger_name`, `message` (`text`, `module`, `func`, `lineno`, `exc`), and `ingestion_group` and `source_table` when the record has them. New fields need no schema change.
+
+```sql
+-- Errors of one run
+SELECT log_timestamp,
+       payload:source_table::STRING AS source_table,
+       payload:message:text::STRING AS message
+FROM main.watersync.watersync_logs
+WHERE run_id = '<run_id>' AND payload:level::STRING = 'ERROR'
+ORDER BY log_timestamp;
+```
+
 ### Via the CLI
 
 ```bash

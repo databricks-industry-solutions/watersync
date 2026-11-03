@@ -1,6 +1,6 @@
 # Job Provisioning
 
-The Control Plane app's **Jobs** page is the recommended way to create jobs: it also configures job and SDP compute, the schedule and run-as identities (see [Jobs created by the app](Control-Plane-App.md#jobs-created-by-the-app)), and its settings can be exported and imported with the rest of the configuration. From Python:
+The Control Plane app's **Jobs** page is the recommended way to create jobs: it also configures job and SDP compute, the schedule and run-as identities (see [Jobs created by the app](Control-Plane-App#jobs-created-by-the-app)), and its settings can be exported and imported with the rest of the configuration. From Python:
 
 ```python
 from watersync.models import JobProvisioningSettings
@@ -12,7 +12,7 @@ settings = JobProvisioningSettings(
     watermark_fqn="main.watersync.jdbc_ingestion_watermark",
     planner_notebook_path="notebooks/Task - Plan Configs",
     worker_notebook_path="notebooks/Task - Run Ingestion",
-    wheel_uri="/Volumes/main/watersync/wheels/watersync-0.2.0-py3-none-any.whl",
+    wheel_uri="/Volumes/main/watersync/wheels/watersync-0.3.1-py3-none-any.whl",
     foreach_concurrency=4,
     cdc_pipeline_file_path="/Workspace/Users/<user>/watersync/src/watersync/pipeline_bootstrap.py",
     # cdc_pipeline_id="<pipeline-uuid>",   # reuse an existing pipeline instead
@@ -31,7 +31,7 @@ watersync-create-job \
   --configuration-fqn main.watersync.jdbc_ingestion_config \
   --watermark-fqn main.watersync.jdbc_ingestion_watermark \
   --ingestion-group epic \
-  --wheel-uri "/Volumes/main/watersync/wheels/watersync-0.2.0-py3-none-any.whl" \
+  --wheel-uri "/Volumes/main/watersync/wheels/watersync-0.3.1-py3-none-any.whl" \
   --planner-notebook-path "/Workspace/Users/<user>/watersync/notebooks/Task - Plan Configs" \
   --worker-notebook-path "/Workspace/Users/<user>/watersync/notebooks/Task - Run Ingestion" \
   --foreach-concurrency 4
