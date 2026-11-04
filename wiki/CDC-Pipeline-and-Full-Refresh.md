@@ -10,7 +10,7 @@
 | Incremental, EPIC CSA | `create_auto_cdc_flow` from staging, sequenced by `_csa_update_dt`, deletes where `_IS_DELETED` |
 | Full + `auto_cdc_from_snapshot` | `create_auto_cdc_from_snapshot_flow` over staging table versions |
 
-All flows are stored as SCD Type 2. WaterSync metadata columns (`_ingested_at`, `_source_table`, `_ingestion_group`, `_ingestion_type`) and CSA control columns are excluded from the history.
+All flows are stored as SCD Type 2. The `_ingested_at` column (the time WaterSync loaded the record into Databricks) is kept in every Silver table and in plain full-load target tables. It is not tracked as history, so a refresh that changes only `_ingested_at` does not create a new version. The other WaterSync metadata columns (`_source_table`, `_ingestion_group`, `_ingestion_type`) and CSA control columns are excluded from the history.
 
 ## Full Refresh
 

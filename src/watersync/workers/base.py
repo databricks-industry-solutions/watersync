@@ -350,12 +350,13 @@ class JdbcIngestionWorker(ABC):
             write_mode,
             extra=_ctx,
         )
-        df_with_metadata = df if (self.config.ingestion_type == "full" and not self.effective_full_refresh) else (
-            df.withColumn("_ingested_at", F.current_timestamp())
-            .withColumn("_source_table", F.lit(self.config.source_table_name))
-            .withColumn("_ingestion_group", F.lit(self.config.ingestion_group))
-            .withColumn("_ingestion_type", F.lit(self.config.ingestion_type))
-        )
+        df_with_metadata = df.withColumn("_ingested_at", F.current_timestamp())
+        if not (self.config.ingestion_type == "full" and not self.effective_full_refresh):
+            df_with_metadata = (
+                df_with_metadata.withColumn("_source_table", F.lit(self.config.source_table_name))
+                .withColumn("_ingestion_group", F.lit(self.config.ingestion_group))
+                .withColumn("_ingestion_type", F.lit(self.config.ingestion_type))
+            )
         writer = df_with_metadata.write.format("delta")
         if is_full:
             writer = writer.mode("overwrite").option("overwriteSchema", "true").option("clusterByAuto", "true")
