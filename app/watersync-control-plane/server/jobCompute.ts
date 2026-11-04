@@ -6,6 +6,9 @@ import { workspace } from './sql.js';
 export const environmentKey = 'watersync_environment';
 export const jobClusterKey = 'watersync_cluster';
 
+// A dependency that is a file in a Unity Catalog volume: a wheel, rather than a pip requirement.
+const volumePath = (dependency: string) => dependency.startsWith('/Volumes/');
+
 /**
  * What a job needs for the chosen compute: `task` goes on every task, `settings` on the job. Serverless tasks
  * install the package through the job environment; job cluster tasks install it as a library.
@@ -22,7 +25,10 @@ export function jobCompute(compute: JobCompute, dependency: string) {
     };
   }
   return {
-    task: { job_cluster_key: jobClusterKey, libraries: [{ pypi: { package: dependency } }] },
+    task: {
+      job_cluster_key: jobClusterKey,
+      libraries: [volumePath(dependency) ? { whl: dependency } : { pypi: { package: dependency } }],
+    },
     settings: {
       job_clusters: [
         {
@@ -37,6 +43,15 @@ export function jobCompute(compute: JobCompute, dependency: string) {
       ],
     },
   };
+}
+
+/** The volume wheel a job installs WaterSync from, or null when it installs the package from GitHub. */
+export function readLibraryPath(settings: jobs.JobSettings | undefined): string | null {
+  const dependencies = [
+    ...(settings?.environments?.find((item) => item.environment_key === environmentKey)?.spec?.dependencies ?? []),
+    ...(settings?.tasks ?? []).flatMap((task) => (task.libraries ?? []).map((library) => library.whl ?? '')),
+  ];
+  return dependencies.find(volumePath) ?? null;
 }
 
 /** The compute a job was generated with, read back from its settings. */

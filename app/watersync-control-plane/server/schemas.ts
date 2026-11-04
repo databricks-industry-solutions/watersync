@@ -248,6 +248,20 @@ export const jobPayloadSchema = locationSchema.extend({
     .min(1)
     // The branch ends up in a pip requirement (and a %pip line for classic pipelines).
     .regex(/^[^\s"'`\\]+$/, 'Branch must not contain whitespace, quotes or backslashes'),
+  // A wheel in a Unity Catalog volume to install WaterSync from instead of the GitHub branch. It ends up in a pip
+  // requirement and a %pip line, like the branch.
+  // Missing or blank means the GitHub branch; files exported before this setting existed have none.
+  libraryPath: z.preprocess(
+    (value) => (value === undefined || (typeof value === 'string' && !value.trim()) ? null : value),
+    z
+      .string()
+      .trim()
+      .regex(
+        /^\/Volumes\/[^/\s"'`\\]+\/[^/\s"'`\\]+\/[^/\s"'`\\]+\/[^\s"'`\\]*[^/\s"'`\\]\.whl$/,
+        'Use a wheel file in a Unity Catalog volume: /Volumes/<catalog>/<schema>/<volume>/<file>.whl'
+      )
+      .nullable()
+  ),
   foreachConcurrency: z.number().int().min(1).max(100),
   cdcPipelineId: z.string().trim().nullable().optional(),
   schedule: scheduleSchema,
@@ -266,6 +280,7 @@ const rangeBound = z
 export const rowCheckJobPayloadSchema = locationSchema.extend({
   gitUrl: jobPayloadSchema.shape.gitUrl,
   gitBranch: jobPayloadSchema.shape.gitBranch,
+  libraryPath: jobPayloadSchema.shape.libraryPath,
   maxParallelTables: z.number().int().min(1).max(32),
   schedule: scheduleSchema,
   // The same compute and identity options as an ingestion job: not every workspace has serverless jobs.

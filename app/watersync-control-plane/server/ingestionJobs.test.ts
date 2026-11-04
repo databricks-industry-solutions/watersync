@@ -145,6 +145,56 @@ describe('readJobSettings', () => {
     );
   });
 
+  it('installs and reads back a wheel from a volume on serverless and job cluster compute', async () => {
+    const wheel = '/Volumes/main/watersync/libs/watersync-0.4.0-py3-none-any.whl';
+    await roundTrip(payload({ libraryPath: wheel }));
+    const serverless = [...state.jobs.values()][0];
+    expect(serverless.environments?.[0]?.spec?.dependencies).toEqual([wheel]);
+    // The generated CDC pipeline installs the same wheel.
+    expect(state.pipeline?.environment?.dependencies).toEqual([wheel]);
+
+    state.jobs.clear();
+    await roundTrip(
+      payload({
+        libraryPath: wheel,
+        compute: {
+          mode: 'JOB_CLUSTER',
+          performanceTarget: 'STANDARD',
+          sparkVersion: '18.x-scala2.13',
+          driverNodeTypeId: 'i3.xlarge',
+          workerNodeTypeId: 'i3.xlarge',
+          minWorkers: 1,
+          maxWorkers: 2,
+        },
+      })
+    );
+    const cluster = [...state.jobs.values()][0];
+    expect(cluster.tasks?.[0]?.libraries).toEqual([{ whl: wheel }]);
+  });
+
+  it('installs from the GitHub branch without a wheel path', async () => {
+    await saveJob(payload({ libraryPath: '  ' }));
+    const [settings] = [...state.jobs.values()];
+    expect(settings.environments?.[0]?.spec?.dependencies).toEqual([
+      'watersync@git+https://github.com/databricks-industry-solutions/watersync.git@feature/x',
+    ]);
+  });
+
+  it('only accepts a wheel file in a Unity Catalog volume', () => {
+    for (const libraryPath of [
+      '/Workspace/Users/me/watersync.whl',
+      '/Volumes/main/watersync/watersync.whl',
+      '/Volumes/main/watersync/libs/watersync.tar.gz',
+      '/Volumes/main/watersync/libs/my "wheel".whl',
+      'dbfs:/Volumes/main/watersync/libs/watersync.whl',
+    ]) {
+      expect(jobPayloadSchema.safeParse({ ...payload(), libraryPath }).success, libraryPath).toBe(false);
+    }
+    expect(
+      payload({ libraryPath: '/Volumes/main/watersync/libs/v1/watersync-0.4.0-py3-none-any.whl' }).libraryPath
+    ).toBe('/Volumes/main/watersync/libs/v1/watersync-0.4.0-py3-none-any.whl');
+  });
+
   it('keeps a pipeline supplied by ID', async () => {
     await roundTrip(payload({ cdcPipelineId: 'existing-pipeline' }));
   });

@@ -86,6 +86,25 @@ class WaterSyncConfigScriptTest(unittest.TestCase):
         self.assertEqual(check_bodies, [{"ingestionGroup": "sales", "checkMode": "basic", "catalog": "prod", "schema": "ws"}])
         self.assertIn("Basic row check job for sales: created job 3 ([sales] Row Check (basic))", logs)
 
+    def test_jobs_keep_their_volume_wheel_when_deployed(self) -> None:
+        wheel = "/Volumes/main/watersync/libs/watersync-0.4.0-py3-none-any.whl"
+        session = FakeSession({
+            "/api/import": [FakeResponse(200, IMPORTED)],
+            "/api/jobs": [FakeResponse(200, {"jobId": 1, "action": "created"})],
+            "/api/row-checks/job": [FakeResponse(200, {"jobId": 2, "action": "created", "name": "check"})],
+        })
+        file = {
+            **FILE,
+            "jobs": [{"ingestionGroup": "hr", "gitUrl": "https://github.com/x/y", "libraryPath": wheel}],
+            "rowCheckJobs": [{"ingestionGroup": "", "checkMode": "basic", "libraryPath": wheel}],
+        }
+        self.assertTrue(watersync_config.import_config(
+            self.app(session), "prod", "ws", file, deploy_jobs=True, log=lambda _: None
+        ))
+        posted = {path: body for _, path, body in session.calls if path != "/api/import"}
+        self.assertEqual(posted["/api/jobs"]["libraryPath"], wheel)
+        self.assertEqual(posted["/api/row-checks/job"]["libraryPath"], wheel)
+
     def test_a_failing_job_does_not_stop_the_others_but_fails_the_import(self) -> None:
         session = FakeSession({
             "/api/import": [FakeResponse(200, IMPORTED)],

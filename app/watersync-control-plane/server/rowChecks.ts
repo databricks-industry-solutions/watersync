@@ -11,7 +11,15 @@ import type {
 import { allResponseRows, execute, tableName, workspace, workspaceBaseUrl } from './sql.js';
 import { watersyncDependency } from './pipelines.js';
 import { logger } from './logging.js';
-import { findLocationJob, jobCompute, readJobCompute, runAsIdentity, runAsTarget, upsertJob } from './jobCompute.js';
+import {
+  findLocationJob,
+  jobCompute,
+  readJobCompute,
+  readLibraryPath,
+  runAsIdentity,
+  runAsTarget,
+  upsertJob,
+} from './jobCompute.js';
 
 export const rowCheckNotebookPath = 'notebooks/Task - Row Check';
 const taskKey = 'row_check';
@@ -47,6 +55,7 @@ type RowCheckJobOptions = {
   description: string;
   gitUrl: string;
   gitBranch: string;
+  libraryPath?: string | null;
   compute: JobCompute;
   runAs: RunAsTarget;
   maxParallelTables: number;
@@ -59,7 +68,10 @@ type RowCheckJobOptions = {
 
 /** The settings of a row check job, whatever its scope and mode. */
 function rowCheckJobSettings(options: RowCheckJobOptions): jobs.JobSettings {
-  const compute = jobCompute(options.compute, watersyncDependency(options.gitUrl, options.gitBranch));
+  const compute = jobCompute(
+    options.compute,
+    watersyncDependency(options.gitUrl, options.gitBranch, options.libraryPath)
+  );
   const runAs = toRunAs(options.runAs);
   return {
     name: options.name,
@@ -165,6 +177,7 @@ function settingsOf(job: jobs.Job, ingestionGroup: string, checkMode: RowCheckMo
     rangeFrom: checkMode === 'detailed' ? parameterDefault(job, 'range_from') : '',
     gitUrl: settings?.git_source?.git_url ?? '',
     gitBranch: settings?.git_source?.git_branch ?? 'main',
+    libraryPath: readLibraryPath(settings),
     maxParallelTables: Number(parameterDefault(job, 'max_parallel_tables')) || 4,
     schedule: settings?.schedule
       ? {

@@ -65,7 +65,7 @@ import { displayTime, formString, fqn, relativeTime } from '../utils';
 import { useControl } from '../lib/control';
 import { PageTitle, ErrorState, ScheduleFields, Toggle } from './shared';
 import { RowCheckDailyChart } from './RowCheckDailyChart';
-import { JobComputeFields, NodeTypeOptions, RunAsFields } from './JobFields';
+import { JobComputeFields, LibrarySourceFields, NodeTypeOptions, RunAsFields } from './JobFields';
 import { computeFromForm, useNodeTypes } from '../lib/jobCompute';
 import type { ComputeMode, PerformanceTarget } from '../lib/jobCompute';
 import { FilterBar } from './FilterBar';
@@ -1317,6 +1317,7 @@ function RowCheckJobForm({
           rangeFrom: checkMode === 'detailed' ? rangeFrom.trim() : '',
           gitUrl: form.get('gitUrl'),
           gitBranch: form.get('gitBranch'),
+          libraryPath: form.get('libraryPath') || null,
           maxParallelTables: Number(form.get('maxParallelTables')),
           schedule: {
             enabled: scheduleEnabled,
@@ -1466,6 +1467,7 @@ function RowCheckJobForm({
                 defaultValue={job?.maxParallelTables ?? 4}
               />
             </div>
+            <LibrarySourceFields id="row-check-library-source" defaultLibraryPath={job?.libraryPath} />
           </div>
         </TabsContent>
         <TabsContent value="compute" data-tab="compute" forceMount className="mt-4 data-[state=inactive]:hidden">

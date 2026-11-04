@@ -176,6 +176,8 @@ export type RowCheckJob = {
   rangeFrom: string;
   gitUrl: string;
   gitBranch: string;
+  /** The volume wheel the job installs WaterSync from; null when it installs it from the GitHub branch. */
+  libraryPath: string | null;
   maxParallelTables: number;
   schedule: Schedule;
   compute: JobCompute;

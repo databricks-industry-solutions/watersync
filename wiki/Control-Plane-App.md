@@ -55,13 +55,14 @@ The **Jobs** dialog builds one job per ingestion group, named `[<group>] Ingesti
 | Tab | Settings |
 | --- | --- |
 | **Job configuration** | The ingestion group; shows the generated job parameters |
-| **Git source & execution** | GitHub repository and branch, parallel tables (`foreach_concurrency`, 1–100), and optionally an existing SDP pipeline ID to reuse |
+| **Git source & execution** | GitHub repository and branch, where to install WaterSync from (the branch, or a wheel in a Unity Catalog volume), parallel tables (`foreach_concurrency`, 1–100), and optionally an existing SDP pipeline ID to reuse |
 | **Job Compute** | **Serverless** (default) with a performance mode (`STANDARD` or `PERFORMANCE_OPTIMIZED`), or a **shared autoscaling job cluster** (Databricks Runtime, driver and worker node types, min/max workers) used by the planner and every worker |
 | **SDP Compute** | Shown when the group has a CDC pipeline: **Serverless** (default), sharing the job's performance mode, or a **classic autoscaling cluster** (node types, min/max workers, Photon) |
 | **Schedule** | Quartz cron expression, time zone, active or paused; or manual runs only |
 | **Run as** | The job runs as its owner (the app service principal, default), a user, or a service principal. The SDP pipeline follows the job (default) or uses its own identity |
 
-- Jobs install the package from Git (`watersync@git+<git_url>.git@<git_branch>`) and run the notebooks from the same repository. The branch must not contain whitespace, quotes or backslashes, because it ends up in the pip requirement.
+- Jobs run the notebooks from the GitHub repository and, by default, install the package from the same branch (`watersync@git+<git_url>.git@<git_branch>`). The branch must not contain whitespace, quotes or backslashes, because it ends up in the pip requirement.
+- To install a wheel instead, pick **Wheel in a Unity Catalog volume** and enter its path, such as `/Volumes/main/watersync/libs/watersync-0.4.0-py3-none-any.whl`. Every task installs it, on serverless and on job clusters, and so does the group's generated SDP pipeline. Use a wheel built from the branch the notebooks run from.
 - Node type fields are prefilled with the smallest general-purpose node type with at least 4 cores (`GET /api/node-types`). Other node types are offered as suggestions.
 - If a required field is missing on a tab you are not viewing, the dialog switches to that tab and names the field.
 - The CDC pipeline is named `[<group>] CDC SCD2 Pipeline` and is created or updated with the job. Serverless pipelines install the package through the pipeline environment. Classic pipelines run on the **Advanced** edition (Auto CDC needs at least Pro) and use a per-group notebook in `/Shared/watersync-generated-pipelines` that installs the package with `%pip`.

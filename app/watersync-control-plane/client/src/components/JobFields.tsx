@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import {
   Input,
   Label,
@@ -218,5 +219,67 @@ export function RunAsFields({
         />
       )}
     </div>
+  );
+}
+
+/**
+ * Where the job's tasks install WaterSync from: the GitHub branch the notebooks come from, or a wheel in a Unity
+ * Catalog volume. A volume wheel is posted as `libraryPath`; the field is absent when the branch is used.
+ */
+export function LibrarySourceFields({
+  id,
+  defaultLibraryPath,
+  gitDependency,
+}: {
+  id: string;
+  defaultLibraryPath?: string | null;
+  /** The pip requirement installed from the branch, shown as a preview when given. */
+  gitDependency?: string;
+}) {
+  const [source, setSource] = useState(defaultLibraryPath ? 'volume' : 'git');
+  const [libraryPath, setLibraryPath] = useState(defaultLibraryPath ?? '');
+  return (
+    <>
+      <div className="space-y-2 md:col-span-2">
+        <Label htmlFor={id}>Install WaterSync from</Label>
+        <Select value={source} onValueChange={setSource}>
+          <SelectTrigger id={id} className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="git">GitHub branch</SelectItem>
+            <SelectItem value="volume">Wheel in a Unity Catalog volume</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      {source === 'volume' && (
+        <div className="space-y-2 md:col-span-2">
+          <Label htmlFor={`${id}-path`}>Wheel path</Label>
+          <Input
+            id={`${id}-path`}
+            name="libraryPath"
+            value={libraryPath}
+            onChange={(event) => setLibraryPath(event.target.value)}
+            pattern="\/Volumes\/[^\s]+\.whl"
+            title="A wheel file in a Unity Catalog volume, e.g. /Volumes/main/watersync/libs/watersync-0.4.0-py3-none-any.whl"
+            placeholder="/Volumes/<catalog>/<schema>/<volume>/watersync-0.4.0-py3-none-any.whl"
+            required
+          />
+          <p className="text-xs text-muted-foreground">
+            Installed on every task instead of the package from GitHub; the notebooks still run from the branch, so use
+            a wheel built from it.
+          </p>
+        </div>
+      )}
+      {source === 'git' && gitDependency && (
+        <div className="space-y-2 md:col-span-2">
+          <Label>Task library</Label>
+          <div className="break-all rounded-md border bg-muted/30 p-3 font-mono text-xs">{gitDependency}</div>
+          <p className="text-xs text-muted-foreground">
+            Installed on the planner and every ingestion worker task from the selected branch.
+          </p>
+        </div>
+      )}
+    </>
   );
 }

@@ -234,6 +234,26 @@ describe('row check jobs', () => {
     });
   });
 
+  it('installs a wheel from a volume on serverless and job clusters, and reads it back', async () => {
+    const wheel = '/Volumes/main/watersync/libs/watersync-0.4.0-py3-none-any.whl';
+    await saveRowCheckJob(payload({ libraryPath: wheel }));
+    expect(state.jobs.get(9)?.environments?.[0]?.spec?.dependencies).toEqual([wheel]);
+    expect((await listRowCheckJobs('dev', 'watersync'))[0]).toMatchObject({ libraryPath: wheel });
+
+    const compute = {
+      mode: 'JOB_CLUSTER',
+      performanceTarget: 'STANDARD',
+      sparkVersion: '17.3.x-scala2.13',
+      driverNodeTypeId: 'm5.xlarge',
+      workerNodeTypeId: 'm5.xlarge',
+      minWorkers: 1,
+      maxWorkers: 2,
+    };
+    await saveRowCheckJob(payload({ libraryPath: wheel, compute }));
+    expect(state.jobs.get(9)?.tasks?.[0]?.libraries).toEqual([{ whl: wheel }]);
+    expect((await listRowCheckJobs('dev', 'watersync'))[0]).toMatchObject({ libraryPath: wheel, compute });
+  });
+
   it('rejects a job cluster without node types, and a range start it cannot read', () => {
     const compute = {
       mode: 'JOB_CLUSTER',

@@ -25,12 +25,12 @@ The script calls the deployed app, so validation, the config write, and job crea
 
 ## What the file contains
 
-| Included                                                                                       | Not included                                                              |
-| ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| Every row of `jdbc_ingestion_config` in the location                                           | Watermarks (`jdbc_ingestion_watermark`): runtime state                    |
-| Each group's job settings: Git source, parallelism, schedule, job compute, SDP compute, run as | Secret **values**: only secret scope/key and UC secret names are exported |
-| The [row check jobs](Row-Checks#row-check-jobs) of the location and of its groups (`rowCheckJobs`): check, group, range start, Git source, parallelism, schedule, job compute, run as | |
-|                                                                                                | Job run history, job IDs and permissions                                  |
+| Included                                                                                                                                                                                            | Not included                                                              |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| Every row of `jdbc_ingestion_config` in the location                                                                                                                                                | Watermarks (`jdbc_ingestion_watermark`): runtime state                    |
+| Each group's job settings: Git source, volume wheel, parallelism, schedule, job compute, SDP compute, run as                                                                                        | Secret **values**: only secret scope/key and UC secret names are exported |
+| The [row check jobs](Row-Checks#row-check-jobs) of the location and of its groups (`rowCheckJobs`): check, group, range start, Git source, volume wheel, parallelism, schedule, job compute, run as |                                                                           |
+|                                                                                                                                                                                                     | Job run history, job IDs and permissions                                  |
 
 Job settings are **read back from the Databricks API** at export time, from the job named
 `[<group>] Ingestion Pipeline` and its CDC pipeline. That means:
@@ -274,6 +274,7 @@ script. A non-zero exit code fails the step.
       "ingestionGroup": "sales",
       "gitUrl": "https://github.com/databricks-industry-solutions/watersync",
       "gitBranch": "main",
+      "libraryPath": null,
       "foreachConcurrency": 4,
       "cdcPipelineId": null,
       "schedule": {
@@ -350,29 +351,30 @@ Each entry is one row of `jdbc_ingestion_config`. See
 
 Each entry holds the settings of one group's job, matching the fields of the **Jobs** page's dialog.
 
-| Field                                                          | Type                                                        | Notes                                                                                 |
-| -------------------------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `ingestionGroup`                                               | string                                                      | Required; one entry per group.                                                        |
-| `gitUrl`                                                       | URL                                                         | Required; must be a `github.com` repository.                                          |
-| `gitBranch`                                                    | string                                                      | Required; no whitespace, quotes or backslashes.                                       |
-| `foreachConcurrency`                                           | integer 1–100                                               | Tables ingested in parallel.                                                          |
-| `cdcPipelineId`                                                | string \| null                                              | `null` lets WaterSync provision the group's CDC pipeline; an ID reuses that pipeline. |
-| `schedule.enabled`                                             | boolean                                                     | `false` means the job runs only when triggered.                                       |
-| `schedule.quartzCronExpression`                                | string                                                      | Quartz cron, at least 6 fields.                                                       |
-| `schedule.timezoneId`                                          | string                                                      | For example `UTC` or `Europe/Rome`.                                                   |
-| `schedule.pauseStatus`                                         | `PAUSED` \| `UNPAUSED`                                      |                                                                                       |
-| `compute.mode`                                                 | `SERVERLESS` \| `JOB_CLUSTER`                               |                                                                                       |
-| `compute.performanceTarget`                                    | `STANDARD` \| `PERFORMANCE_OPTIMIZED`                       | Serverless performance mode, shared by the job's serverless tasks.                    |
-| `compute.sparkVersion`, `driverNodeTypeId`, `workerNodeTypeId` | string                                                      | Required for `JOB_CLUSTER`. Node types are cloud-specific.                            |
-| `compute.minWorkers`, `maxWorkers`                             | integer                                                     | Autoscaling range; `maxWorkers` ≥ `minWorkers`.                                       |
-| `pipelineCompute`                                              | object                                                      | Optional; defaults to serverless.                                                     |
-| `pipelineCompute.mode`                                         | `SERVERLESS` \| `CLASSIC`                                   |                                                                                       |
-| `pipelineCompute.nodeTypeId`, `driverNodeTypeId`               | string                                                      | Required for `CLASSIC`.                                                               |
-| `pipelineCompute.minWorkers`, `maxWorkers`, `photon`           | integer, integer, boolean                                   | Classic only.                                                                         |
-| `runAs`                                                        | object                                                      | Optional; defaults to the owner for both.                                             |
-| `runAs.job.mode`                                               | `DEFAULT` \| `USER` \| `SERVICE_PRINCIPAL`                  | `DEFAULT` runs as the owner, the app service principal.                               |
-| `runAs.pipeline.mode`                                          | `SAME_AS_JOB` \| `DEFAULT` \| `USER` \| `SERVICE_PRINCIPAL` | Ignored when `cdcPipelineId` is set.                                                  |
-| `runAs.*.principal`                                            | string                                                      | User email for `USER`, application ID for `SERVICE_PRINCIPAL`.                        |
+| Field                                                          | Type                                                        | Notes                                                                                                                                            |
+| -------------------------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ingestionGroup`                                               | string                                                      | Required; one entry per group.                                                                                                                   |
+| `gitUrl`                                                       | URL                                                         | Required; must be a `github.com` repository.                                                                                                     |
+| `gitBranch`                                                    | string                                                      | Required; no whitespace, quotes or backslashes.                                                                                                  |
+| `libraryPath`                                                  | string \| null                                              | Optional. A wheel in a Unity Catalog volume (`/Volumes/<catalog>/<schema>/<volume>/<file>.whl`) to install WaterSync from instead of the branch. |
+| `foreachConcurrency`                                           | integer 1–100                                               | Tables ingested in parallel.                                                                                                                     |
+| `cdcPipelineId`                                                | string \| null                                              | `null` lets WaterSync provision the group's CDC pipeline; an ID reuses that pipeline.                                                            |
+| `schedule.enabled`                                             | boolean                                                     | `false` means the job runs only when triggered.                                                                                                  |
+| `schedule.quartzCronExpression`                                | string                                                      | Quartz cron, at least 6 fields.                                                                                                                  |
+| `schedule.timezoneId`                                          | string                                                      | For example `UTC` or `Europe/Rome`.                                                                                                              |
+| `schedule.pauseStatus`                                         | `PAUSED` \| `UNPAUSED`                                      |                                                                                                                                                  |
+| `compute.mode`                                                 | `SERVERLESS` \| `JOB_CLUSTER`                               |                                                                                                                                                  |
+| `compute.performanceTarget`                                    | `STANDARD` \| `PERFORMANCE_OPTIMIZED`                       | Serverless performance mode, shared by the job's serverless tasks.                                                                               |
+| `compute.sparkVersion`, `driverNodeTypeId`, `workerNodeTypeId` | string                                                      | Required for `JOB_CLUSTER`. Node types are cloud-specific.                                                                                       |
+| `compute.minWorkers`, `maxWorkers`                             | integer                                                     | Autoscaling range; `maxWorkers` ≥ `minWorkers`.                                                                                                  |
+| `pipelineCompute`                                              | object                                                      | Optional; defaults to serverless.                                                                                                                |
+| `pipelineCompute.mode`                                         | `SERVERLESS` \| `CLASSIC`                                   |                                                                                                                                                  |
+| `pipelineCompute.nodeTypeId`, `driverNodeTypeId`               | string                                                      | Required for `CLASSIC`.                                                                                                                          |
+| `pipelineCompute.minWorkers`, `maxWorkers`, `photon`           | integer, integer, boolean                                   | Classic only.                                                                                                                                    |
+| `runAs`                                                        | object                                                      | Optional; defaults to the owner for both.                                                                                                        |
+| `runAs.job.mode`                                               | `DEFAULT` \| `USER` \| `SERVICE_PRINCIPAL`                  | `DEFAULT` runs as the owner, the app service principal.                                                                                          |
+| `runAs.pipeline.mode`                                          | `SAME_AS_JOB` \| `DEFAULT` \| `USER` \| `SERVICE_PRINCIPAL` | Ignored when `cdcPipelineId` is set.                                                                                                             |
+| `runAs.*.principal`                                            | string                                                      | User email for `USER`, application ID for `SERVICE_PRINCIPAL`.                                                                                   |
 
 ### Validation
 

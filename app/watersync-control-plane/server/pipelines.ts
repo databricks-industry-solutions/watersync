@@ -8,8 +8,12 @@ export const plannerNotebookPath = 'notebooks/Task - Plan Configs';
 export const workerNotebookPath = 'notebooks/Task - Run Ingestion';
 export const selectiveRefreshNotebookPath = 'src/watersync/utils/selective_pipeline_refresh';
 
-export const watersyncDependency = (gitUrl: string, gitBranch: string) =>
-  `watersync@git+${gitUrl.replace(/\.git$/, '')}.git@${gitBranch}`;
+/**
+ * The pip requirement every task and the CDC pipeline install: a wheel in a Unity Catalog volume when one is
+ * given, otherwise the package from the job's GitHub branch.
+ */
+export const watersyncDependency = (gitUrl: string, gitBranch: string, libraryPath?: string | null) =>
+  libraryPath || `watersync@git+${gitUrl.replace(/\.git$/, '')}.git@${gitBranch}`;
 
 export async function groupNeedsCdcPipeline(catalog: string, schema: string, ingestionGroup: string) {
   const response = await execute(
@@ -44,6 +48,7 @@ export async function ensureCdcPipeline(opts: {
   ingestionGroup: string;
   gitUrl: string;
   gitBranch: string;
+  libraryPath?: string | null;
   compute: PipelineCompute;
   runAs?: pipelines.RunAs;
 }) {
@@ -62,10 +67,10 @@ export async function ensureCdcPipeline(opts: {
   const genDir = '/Shared/watersync-generated-pipelines';
   const bootstrapPath = `${genDir}/cdc_pipeline_bootstrap.py`;
   await workspace.workspace.mkdirs({ path: genDir });
-  const dependency = watersyncDependency(opts.gitUrl, opts.gitBranch);
+  const dependency = watersyncDependency(opts.gitUrl, opts.gitBranch, opts.libraryPath);
   let library: pipelines.PipelineLibrary;
   if (opts.compute.mode === 'CLASSIC') {
-    // One notebook per group, because the %pip line carries the group's git source.
+    // One notebook per group, because the %pip line carries the group's package source.
     const groupSlug = opts.ingestionGroup.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 60);
     const groupHash = createHash('sha256').update(opts.ingestionGroup).digest('hex').slice(0, 8);
     const notebookPath = `${genDir}/cdc_pipeline_bootstrap_classic_${groupSlug}_${groupHash}`;

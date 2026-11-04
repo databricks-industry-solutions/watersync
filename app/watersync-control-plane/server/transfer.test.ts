@@ -293,6 +293,21 @@ describe('importConfiguration', () => {
     expect(rows[3]).toMatchObject({ epic_change_method: 'stored_procedure', epic_change_procedure: null });
   });
 
+  it('deploys a job with the volume wheel it was exported with', async () => {
+    const wheel = '/Volumes/main/watersync/libs/watersync-0.4.0-py3-none-any.whl';
+    const entries = validateImport({
+      ...location,
+      file: { configs: [config()], jobs: [job({ libraryPath: wheel }), job({ ingestionGroup: 'hr' })] },
+    });
+    saveJob.mockResolvedValue({ jobId: 7, action: 'created' });
+
+    await importConfiguration('dev', 'watersync', entries, { replaceGroups: false, deployJobs: true });
+
+    expect(saveJob).toHaveBeenCalledWith(expect.objectContaining({ ingestionGroup: 'sales', libraryPath: wheel }));
+    // A file written before the setting existed installs from the GitHub branch.
+    expect(saveJob).toHaveBeenCalledWith(expect.objectContaining({ ingestionGroup: 'hr', libraryPath: null }));
+  });
+
   it('keeps going when a job fails and leaves other rows alone without replaceGroups', async () => {
     const entries = validateImport({
       ...location,

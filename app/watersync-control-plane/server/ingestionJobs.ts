@@ -11,7 +11,14 @@ import {
   watersyncDependency,
 } from './pipelines.js';
 import { logger, serializeError } from './logging.js';
-import { findLocationJob, jobCompute, readJobCompute, runAsIdentity, runAsTarget } from './jobCompute.js';
+import {
+  findLocationJob,
+  jobCompute,
+  readJobCompute,
+  readLibraryPath,
+  runAsIdentity,
+  runAsTarget,
+} from './jobCompute.js';
 
 const jobName = (ingestionGroup: string) => `[${ingestionGroup}] Ingestion Pipeline`;
 
@@ -26,6 +33,7 @@ export async function saveJob(body: JobPayload) {
         ingestionGroup: body.ingestionGroup,
         gitUrl: body.gitUrl,
         gitBranch: body.gitBranch,
+        libraryPath: body.libraryPath,
         compute: body.pipelineCompute,
         runAs: toRunAs(body.runAs.pipeline.mode === 'SAME_AS_JOB' ? body.runAs.job : body.runAs.pipeline),
       })
@@ -34,7 +42,7 @@ export async function saveJob(body: JobPayload) {
   const jobRunAs = toRunAs(body.runAs.job);
   const configurationFqn = `${body.catalog}.${body.schema}.jdbc_ingestion_config`;
   const watermarkFqn = `${body.catalog}.${body.schema}.jdbc_ingestion_watermark`;
-  const compute = jobCompute(body.compute, watersyncDependency(body.gitUrl, body.gitBranch));
+  const compute = jobCompute(body.compute, watersyncDependency(body.gitUrl, body.gitBranch, body.libraryPath));
   const taskCompute = compute.task;
   const tasks: jobs.Task[] = [
     {
@@ -133,6 +141,7 @@ export async function saveJob(body: JobPayload) {
     ingestionGroup: body.ingestionGroup,
     cdcPipelineId,
     computeMode: body.compute.mode,
+    librarySource: body.libraryPath ? 'volume' : 'git',
     jobRunAs: body.runAs.job.mode,
     pipelineRunAs: body.runAs.pipeline.mode,
   });
@@ -232,6 +241,7 @@ async function readGroupJobSettings(ingestionGroup: string, configurationFqn: st
       ingestionGroup,
       gitUrl: settings.git_source.git_url,
       gitBranch: settings.git_source.git_branch ?? 'main',
+      libraryPath: readLibraryPath(settings),
       foreachConcurrency: tasks.find((task) => task.task_key === 'ingestion_worker')?.for_each_task?.concurrency ?? 1,
       cdcPipelineId: pipelineId && !generatedPipeline ? pipelineId : null,
       schedule: settings.schedule
