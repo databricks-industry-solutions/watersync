@@ -313,6 +313,24 @@ script. A non-zero exit code fails the step.
 empty or omitted, so a file can carry only tables or only job settings. A file holds at most 5,000 configs and
 500 jobs.
 
+### Sample file
+
+[`examples/watersync-config.json`](https://github.com/databricks-industry-solutions/watersync/blob/main/examples/watersync-config.json)
+is a complete file to start from, with every field of every entry. It has four ingestion groups, each set up a
+different way:
+
+| Group               | Tables                                            | Change detection                                       | Connection                | Job                                                                           |
+| ------------------- | ------------------------------------------------- | ------------------------------------------------------ | ------------------------- | ----------------------------------------------------------------------------- |
+| `clarity_csa`       | `PAT_ENC`, `PATIENT`, `PAT_ENC_DX`                | EPIC CSA tables                                        | UC connection             | Serverless, hourly                                                            |
+| `clarity_sp`        | `ORDER_PROC`, `HSP_ACCOUNT`, `CLARITY_ADT`        | Epic's stored procedure                                | JDBC URL and UC secret    | Serverless, every 15 minutes, wheel from a volume, run as a service principal |
+| `clarity_reference` | `CLARITY_DEP`, `CLARITY_SER`                      | Full loads: one overwrite, one with SCD Type 2 history | JDBC URL and secret scope | Job cluster and classic CDC pipeline, nightly                                 |
+| `finance`           | PostgreSQL `invoices`, `invoice_lines` (disabled) | Timestamp watermark                                    | UC connection             | Serverless, manual runs, run as a user                                        |
+
+It also has three row check jobs: a daily basic check of the whole location, and weekly detailed checks of two
+groups. Before importing it, replace the catalog and schema names, connections, secrets, JDBC URLs, node types,
+the service principal and user, and the wheel path with your own, and delete the groups you don't need. Then
+validate it with `--dry-run`.
+
 ### `configs[]`
 
 Each entry is one row of `jdbc_ingestion_config`. See

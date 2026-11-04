@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
+import { importPayloadSchema } from './schemas.js';
 
 type Parameter = { name: string; value?: string };
 const execute = vi.fn<(statement: string, parameters?: Parameter[]) => Promise<unknown>>();
@@ -122,6 +124,25 @@ describe('validateImport', () => {
     expect(paths).toEqual(
       expect.arrayContaining(['file.configs.1.watermarkColumn', 'file.jobs.0.gitUrl', 'file.configs.2'])
     );
+  });
+});
+
+describe('examples/watersync-config.json', () => {
+  it('is a valid import file, as the Import dialog and the CLI read it', () => {
+    const file: unknown = JSON.parse(
+      readFileSync(new URL('../../../examples/watersync-config.json', import.meta.url), 'utf8')
+    );
+    // The same steps as POST /api/import.
+    const body = importPayloadSchema.parse({ ...location, file });
+    const { configs, jobs, rowCheckJobs } = validateImport(body);
+    expect(importSummary(configs, jobs, rowCheckJobs)).toEqual([
+      { ingestionGroup: 'clarity_csa', configCount: 3, hasJobSettings: true, rowChecks: ['detailed'] },
+      { ingestionGroup: 'clarity_reference', configCount: 2, hasJobSettings: true, rowChecks: ['detailed'] },
+      { ingestionGroup: 'clarity_sp', configCount: 3, hasJobSettings: true, rowChecks: [] },
+      { ingestionGroup: 'finance', configCount: 2, hasJobSettings: true, rowChecks: [] },
+    ]);
+    // Plus the basic check of the whole location.
+    expect(rowCheckJobs).toHaveLength(3);
   });
 });
 
