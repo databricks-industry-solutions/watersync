@@ -15,7 +15,6 @@ import {
   EmptyDescription,
   EmptyHeader,
   EmptyTitle,
-  Input,
   Skeleton,
   Table,
   TableBody,
@@ -25,49 +24,44 @@ import {
   TableRow,
   useAnalyticsQuery,
 } from '@databricks/appkit-ui/react';
-import { RefreshCw, RotateCcw } from 'lucide-react';
+import { RotateCcw } from 'lucide-react';
 import { api } from '../lib/api';
 import { reportError, useReportedFailure } from '../lib/logging';
 import type { Location, WatermarkRow } from '../types';
 import { fqn, displayTime } from '../utils';
 import { useControl } from '../lib/control';
 import { PageTitle, ErrorState, Field } from './shared';
+import { FilterBar } from './FilterBar';
+import { Pagination } from './Pagination';
+import { usePageFilters } from '../lib/pageFilters';
+import { usePagination } from '../lib/pagination';
 
 export function WatermarksPage() {
   const { location, revision, refresh } = useControl();
-  const [search, setSearch] = useState('');
+  const filters = usePageFilters();
+  const pages = usePagination(filters.key);
   const [editing, setEditing] = useState<WatermarkRow | null>(null);
   const [refreshing, setRefreshing] = useState<WatermarkRow | null>(null);
 
   const params = useMemo(
     () => ({
       table_name: sql.string(fqn(location, 'jdbc_ingestion_watermark')),
-      search: sql.string(search),
-      page_size: sql.int(100),
-      page_offset: sql.int(0),
+      ...filters.params,
+      ...pages.params,
       refresh_token: sql.int(revision),
     }),
-    [location, search, revision]
+    [location, filters.params, pages.params, revision]
   );
   const { data, loading, error } = useAnalyticsQuery('watermark_entries', params);
-  useReportedFailure('query.watermark_entries', error, { ...location, search });
+  useReportedFailure('query.watermark_entries', error, { ...location, group: filters.group, search: filters.search });
+  const total = Number(data?.[0]?.total_count ?? 0);
   return (
     <>
       <PageTitle
         title="Incremental watermark state"
         description="Actual persisted state; deleting a row forces the framework's next incremental read to start fresh."
       />
-      <div className="mb-4 flex gap-2">
-        <Input
-          aria-label="Filter watermarks"
-          placeholder="Filter group or source table"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-        <Button variant="outline" onClick={refresh}>
-          <RefreshCw className="h-4 w-4" />
-        </Button>
-      </div>
+      <FilterBar location={location} revision={revision} filters={filters} onRefresh={refresh} />
       {loading ? (
         <Skeleton className="h-80" />
       ) : error ? (
@@ -75,12 +69,21 @@ export function WatermarksPage() {
       ) : !data?.length ? (
         <Empty>
           <EmptyHeader>
-            <EmptyTitle>No watermark rows</EmptyTitle>
-            <EmptyDescription>No incremental state exists at this location.</EmptyDescription>
+            <EmptyTitle>{filters.filtered ? 'No watermark row matches the filters' : 'No watermark rows'}</EmptyTitle>
+            <EmptyDescription>
+              {filters.filtered
+                ? 'Change or clear the filters to see more tables.'
+                : 'No incremental state exists at this location.'}
+            </EmptyDescription>
           </EmptyHeader>
+          {filters.filtered && (
+            <Button variant="outline" size="sm" onClick={filters.clear}>
+              Clear filters
+            </Button>
+          )}
         </Empty>
       ) : (
-        <Card>
+        <Card className="gap-0 overflow-hidden py-0">
           <Table>
             <TableHeader>
               <TableRow>
@@ -127,6 +130,14 @@ export function WatermarksPage() {
               ))}
             </TableBody>
           </Table>
+          <Pagination
+            total={total}
+            page={pages.page}
+            pageSize={pages.pageSize}
+            onPageChange={pages.setPage}
+            onPageSizeChange={pages.setPageSize}
+            noun="tables"
+          />
         </Card>
       )}
       <WatermarkDialog

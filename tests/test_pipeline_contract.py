@@ -103,6 +103,30 @@ class PipelineContractTest(unittest.TestCase):
         self.assertEqual(dp.tables, ["gold.sales.orders_scd2"])
         self.assertEqual(dp.flows[0]["target"], "gold.sales.orders_scd2")
         self.assertEqual(dp.flows[0]["keys"], ["order_id"])
+        self.assertEqual(dp.flows[0]["track_history_except_column_list"], ["_ingested_at"])
+
+    def test_incremental_flows_keep_ingested_at(self) -> None:
+        for csa in (False, True):
+            dp = FakeDp()
+            builder = CdcScd2PipelineBuilder(None, dp, "meta.config.jdbc_ingestion_config", "group")
+            builder.load_configs = lambda csa=csa: [{
+                "ingestion_group": "group",
+                "source_table_name": "source.orders",
+                "staging_table_fqn": "bronze.sales.orders",
+                "target_table_fqn": "gold.sales.orders_scd2",
+                "ingestion_type": "incremental",
+                "key_columns": "order_id",
+                "watermark_column": "updated_at",
+                "epic_csa_enabled": csa,
+                "auto_cdc_from_snapshot": False,
+            }]
+
+            with patch("watersync.cdc_pipeline.col", side_effect=lambda value: value), \
+                    patch("watersync.cdc_pipeline.expr", side_effect=lambda value: value):
+                builder.build()
+
+            self.assertNotIn("_ingested_at", dp.flows[0]["except_column_list"])
+            self.assertEqual(dp.flows[0]["track_history_except_column_list"], ["_ingested_at"])
 
 
 if __name__ == "__main__":

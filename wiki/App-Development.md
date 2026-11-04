@@ -164,17 +164,24 @@ npx vitest run
 | `POST /api/config`, `DELETE /api/config`                                                | Save (insert, update or rename) or delete a config row        |
 | `PATCH /api/watermark`, `DELETE /api/watermark`                                         | Update or delete a table's watermark state                    |
 | `POST /api/source-tables`, `POST /api/source-columns`, `POST /api/source-columns-batch` | Source discovery                                              |
-| `GET /api/jobs`                                                                         | Visible jobs with their last 10 runs                          |
+| `GET /api/jobs?catalog=&schema=&group=…`                                                | The location's job of each listed group (at most 100), with its last 10 runs, and the groups without one |
 | `GET /api/node-types`                                                                   | Node types for compute settings, with a default               |
 | `POST /api/jobs`                                                                        | Create or update a group's job and CDC pipeline               |
 | `POST /api/jobs/:jobId/run`, `PATCH /api/jobs/:jobId/schedule`                          | Run a job (optionally as a full refresh), change its schedule |
 | `GET /api/export`, `POST /api/import`                                                   | Export or import a location's configuration                   |
 | `GET /api/latest-release`                                                               | Latest published GitHub release, for the new release notice   |
+| `GET /api/row-checks/jobs`, `POST /api/row-checks/job`, `DELETE /api/row-checks/job`    | List the row check jobs of the location and its groups, or of the location and the `group` parameters given (each with its last 10 runs); save one, or delete one |
+| `POST /api/row-checks/job/run`                                                         | Run one row check job now with its own settings |
+| `POST /api/row-checks/run`                                                              | Start a basic or detailed row check, optionally for one table |
+
+## Query caching
+
+The analytics plugin caches each query result for an hour, keyed by its parameters. Every query in `config/queries` takes a `refresh_token`, which `Layout.tsx` sets to the current time in seconds on each page load and refresh, so both always reach the warehouse. Give new queries the same parameter.
 
 ## Migrations
 
 Selecting a location runs the pending migrations in `server/migrations`, once per location and server process.
-Applied ids are tracked in `<catalog>.<schema>._watersync_migrations`. To add one, create a file and append it to
+Applied ids are tracked in `<catalog>.<schema>._watersync_migrations`. Tables whose names start with `_` (`_watersync_migrations`, `_watersync_row_checks`) are managed by WaterSync and not meant to be modified; give new internal tables the same prefix. To add one, create a file and append it to
 `migrations` in `server/migrations/index.ts`.
 
 | Id                            | Change                                                 |
@@ -182,7 +189,8 @@ Applied ids are tracked in `<catalog>.<schema>._watersync_migrations`. To add on
 | `001_create_tables`           | `jdbc_ingestion_config` and `jdbc_ingestion_watermark` |
 | `002_add_uc_secret_name`      | `uc_secret_name` column                                |
 | `003_add_connection_database` | `connection_database` column                           |
-| `004_add_epic_change_columns` | `epic_change_*` columns                                |
+| `004_create_row_checks`       | `_watersync_row_checks` (see [Row Checks](Row-Checks)) |
+| `005_add_epic_change_columns` | `epic_change_*` columns                                |
 
 ## Logging and Diagnostics
 
@@ -217,7 +225,7 @@ one-line JSON records on stdout/stderr, which is what `databricks apps logs` and
 ## Export and Import Internals
 
 The **Export** and **Import** buttons in the app header export the selected location to a JSON file and import such a file into another one.
-User guide, file format and the deployment-pipeline script: [Import and Export](Import-and-Export.md).
+User guide, file format and the deployment-pipeline script: [Import and Export](Import-and-Export).
 
 Where the code lives:
 

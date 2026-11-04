@@ -43,14 +43,9 @@ export const fqn = (location: Location, table: string) => `${location.catalog}.$
 export const displayTime = (value: string | number | null | undefined) =>
   value ? new Date(typeof value === 'number' ? value : value).toLocaleString() : 'Never';
 
+// The end states of a job run that are not a success.
+export const failedStates = ['FAILED', 'TIMEDOUT', 'CANCELED', 'INTERNAL_ERROR'];
 export const runStatus = (run?: JobRun) => run?.state?.result_state ?? run?.state?.life_cycle_state ?? 'NEVER_RUN';
-
-export const statusVariant = (status: string): 'default' | 'secondary' | 'destructive' | 'outline' => {
-  if (status === 'SUCCESS') return 'default';
-  if (['FAILED', 'TIMEDOUT', 'CANCELED', 'INTERNAL_ERROR'].includes(status)) return 'destructive';
-  if (['RUNNING', 'PENDING', 'QUEUED', 'TERMINATING'].includes(status)) return 'secondary';
-  return 'outline';
-};
 
 export const runDuration = (run: JobRun) => {
   const duration =
@@ -100,4 +95,21 @@ export const matchesTableFilter = (table: SourceTable, filter: string) => {
   const schemaPart = value.slice(0, separator).trim();
   const tablePart = value.slice(separator + 1).trim();
   return (!schemaPart || schema.includes(schemaPart)) && (!tablePart || name.includes(tablePart));
+};
+
+const relativeUnits: Array<[Intl.RelativeTimeFormatUnit, number]> = [
+  ['day', 86_400_000],
+  ['hour', 3_600_000],
+  ['minute', 60_000],
+];
+/** "12 min. ago"-style time for dense tables; pair it with displayTime in a title for the exact value. */
+export const relativeTime = (value: string | number | null | undefined, now = Date.now()) => {
+  if (!value) return 'Never';
+  const elapsed = now - new Date(value).getTime();
+  if (elapsed < 60_000) return 'just now';
+  const format = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto', style: 'short' });
+  for (const [unit, size] of relativeUnits) {
+    if (elapsed >= size || unit === 'minute') return format.format(-Math.floor(elapsed / size), unit);
+  }
+  return displayTime(value);
 };

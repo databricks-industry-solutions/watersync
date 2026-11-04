@@ -56,4 +56,4 @@ The documentation lives in `wiki/`, one page per topic, and `wiki/Home.md` is th
 
 - Update the wiki page in the same pull request as the behavior change it describes.
 - Name pages `Title-With-Dashes.md`, and add new pages to `Home.md` and `_Sidebar.md`.
-- Link between pages with relative paths such as `[Import and Export](Import-and-Export.md#authentication)`, so the links work when browsing the repository.
+- Link between pages with relative paths such as `[Import and Export](Import-and-Export#authentication)`, so the links work when browsing the repository.

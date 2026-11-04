@@ -13,7 +13,7 @@ import {
   Input,
   Label,
 } from '@databricks/appkit-ui/react';
-import { Activity, Database, Droplets, Settings2, Workflow } from 'lucide-react';
+import { Activity, Database, Droplets, ScanSearch, Settings2, Workflow } from 'lucide-react';
 import { api } from '../lib/api';
 import { reportWarning } from '../lib/logging';
 import type { Context, Location } from '../types';
@@ -22,15 +22,22 @@ import { LandingPage } from './LandingPage';
 import { ExportButton, ImportButton } from './ConfigTransfer';
 import { ReleaseNotice } from './ReleaseNotice';
 
+/**
+ * The analytics plugin caches each query result for an hour, keyed by its parameters, and every query takes
+ * this value as refresh_token. Using the time in seconds (still an INT until 2038) makes each page load and each
+ * refresh a new key; a plain counter restarts at 0 on every load and would be served stale results.
+ */
+const nextRevision = (previous = 0) => Math.max(previous + 1, Math.floor(Date.now() / 1000));
+
 export function Layout() {
   const [location, setLocationState] = useState<Location | null>(readLocation);
-  const [revision, setRevision] = useState(0);
+  const [revision, setRevision] = useState(() => nextRevision());
   const [draft, setDraft] = useState<Location>(location ?? { catalog: '', schema: '' });
   const setLocation = (next: Location) => {
     setLocationState(next);
     setDraft(next);
     writeLocation(next);
-    setRevision((v) => v + 1);
+    setRevision(nextRevision);
   };
   useEffect(() => {
     if (!location) return;
@@ -51,12 +58,13 @@ export function Layout() {
   if (!location) {
     return <LandingPage onSelect={setLocation} />;
   }
-  const context: Context = { location, setLocation, revision, refresh: () => setRevision((v) => v + 1) };
+  const context: Context = { location, setLocation, revision, refresh: () => setRevision(nextRevision) };
   const links = [
     ['/', 'Overview', Activity],
     ['/config', 'Configuration', Settings2],
     ['/watermarks', 'Watermarks', Droplets],
     ['/jobs', 'Jobs', Workflow],
+    ['/row-checks', 'Row checks', ScanSearch],
   ] as const;
   return (
     <div className="app-shell min-h-screen bg-background text-foreground">
@@ -124,7 +132,7 @@ export function Layout() {
             </DialogContent>
           </Dialog>
           <ExportButton location={location} />
-          <ImportButton location={location} onImported={() => setRevision((v) => v + 1)} />
+          <ImportButton location={location} onImported={() => setRevision(nextRevision)} />
         </div>
         <div className="nav-strip">
           <nav className="mx-auto flex max-w-screen-2xl gap-1 overflow-x-auto px-6">

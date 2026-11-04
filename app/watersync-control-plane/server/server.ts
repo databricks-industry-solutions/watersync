@@ -12,6 +12,7 @@ import { registerDiscoveryRoutes } from './routes/discovery.js';
 import { registerJobRoutes } from './routes/jobs.js';
 import { registerTransferRoutes } from './routes/transfer.js';
 import { registerReleaseRoutes } from './routes/releases.js';
+import { registerRowCheckRoutes } from './routes/rowChecks.js';
 
 installProcessLogging();
 
@@ -35,6 +36,7 @@ await createApp({
       registerJobRoutes(app);
       registerTransferRoutes(app);
       registerReleaseRoutes(app);
+      registerRowCheckRoutes(app);
 
       logger.info('server.routes_registered', { nodeEnv: process.env.NODE_ENV ?? 'development' });
     });

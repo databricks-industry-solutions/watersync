@@ -46,3 +46,8 @@ def row_to_dict(row: Any) -> dict[str, Any]:
     if hasattr(row, "asDict"):
         return row.asDict(recursive=True)
     return dict(row)
+
+
+def epic_csa_table_name(source_table_name: str) -> str:
+    """The EPIC CSA change table of a Clarity table: ``dbo.PAT_ENC`` is tracked in ``epic_util.csa_pat_enc``."""
+    return f"epic_util.csa_{source_table_name.split('.')[-1].lower()}"

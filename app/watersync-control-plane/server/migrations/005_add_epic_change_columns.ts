@@ -12,7 +12,7 @@ const columns = [
  * instead of the CSA tables.
  */
 export default {
-  id: '004_add_epic_change_columns',
+  id: '005_add_epic_change_columns',
   description: 'Add EPIC stored-procedure columns to jdbc_ingestion_config',
   async run(ctx, catalog, schema) {
     const target = ctx.tableName(catalog, schema, 'jdbc_ingestion_config');

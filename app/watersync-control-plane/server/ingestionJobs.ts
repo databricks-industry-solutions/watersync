@@ -1,6 +1,6 @@
 import type { jobs } from '@databricks/sdk-experimental';
 import { toRunAs, type JobPayload, type JobSettings } from './schemas.js';
-import { workspace } from './sql.js';
+import { workspace, workspaceBaseUrl } from './sql.js';
 import {
   cdcPipelineName,
   groupNeedsCdcPipeline,
@@ -11,10 +11,9 @@ import {
   watersyncDependency,
 } from './pipelines.js';
 import { logger, serializeError } from './logging.js';
+import { findLocationJob, jobCompute, readJobCompute, runAsIdentity, runAsTarget } from './jobCompute.js';
 
 const jobName = (ingestionGroup: string) => `[${ingestionGroup}] Ingestion Pipeline`;
-const environmentKey = 'watersync_environment';
-const jobClusterKey = 'watersync_cluster';
 
 /** Creates or updates the group's job (and its CDC pipeline when the group needs one). */
 export async function saveJob(body: JobPayload) {
@@ -35,14 +34,8 @@ export async function saveJob(body: JobPayload) {
   const jobRunAs = toRunAs(body.runAs.job);
   const configurationFqn = `${body.catalog}.${body.schema}.jdbc_ingestion_config`;
   const watermarkFqn = `${body.catalog}.${body.schema}.jdbc_ingestion_watermark`;
-  const dependency = watersyncDependency(body.gitUrl, body.gitBranch);
-  const taskCompute =
-    body.compute.mode === 'SERVERLESS'
-      ? { environment_key: environmentKey }
-      : {
-          job_cluster_key: jobClusterKey,
-          libraries: [{ pypi: { package: dependency } }],
-        };
+  const compute = jobCompute(body.compute, watersyncDependency(body.gitUrl, body.gitBranch));
+  const taskCompute = compute.task;
   const tasks: jobs.Task[] = [
     {
       task_key: 'ingestion_configs',
@@ -97,31 +90,7 @@ export async function saveJob(body: JobPayload) {
     ...(body.compute.mode === 'SERVERLESS' || serverlessPipelineTask
       ? { performance_target: body.compute.performanceTarget }
       : {}),
-    ...(body.compute.mode === 'SERVERLESS'
-      ? {
-          environments: [
-            {
-              environment_key: environmentKey,
-              spec: { environment_version: '4', dependencies: [dependency] },
-            },
-          ],
-        }
-      : {
-          job_clusters: [
-            {
-              job_cluster_key: jobClusterKey,
-              new_cluster: {
-                spark_version: body.compute.sparkVersion,
-                driver_node_type_id: body.compute.driverNodeTypeId,
-                node_type_id: body.compute.workerNodeTypeId,
-                autoscale: {
-                  min_workers: body.compute.minWorkers,
-                  max_workers: body.compute.maxWorkers,
-                },
-              },
-            },
-          ],
-        }),
+    ...compute.settings,
     parameters: [
       { name: 'configuration_fqn', default: configurationFqn },
       { name: 'watermark_fqn', default: watermarkFqn },
@@ -176,16 +145,59 @@ const defaultSchedule = {
   timezoneId: 'America/New_York',
   pauseStatus: 'UNPAUSED',
 } as const;
-const servicePrincipalId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const runAsIdentity = (runAs?: { user_name?: string; service_principal_name?: string }) =>
-  runAs?.user_name ?? runAs?.service_principal_name;
-// The app service principal creates (and so owns) every generated resource; running as it is what DEFAULT means.
-const runAsTarget = (identity: string | undefined, creator: string | undefined) =>
-  !identity || identity === creator
-    ? ({ mode: 'DEFAULT', principal: '' } as const)
-    : servicePrincipalId.test(identity)
-      ? ({ mode: 'SERVICE_PRINCIPAL', principal: identity } as const)
-      : ({ mode: 'USER', principal: identity } as const);
+
+/**
+ * The jobs of a page of ingestion groups at a location, each with its last 10 runs, and the groups that have no
+ * job yet. Jobs are found by name, so the cost follows the page size, not the number of jobs in the workspace.
+ */
+export async function listGroupJobs(catalog: string, schema: string, ingestionGroups: string[]) {
+  const configurationFqn = `${catalog}.${schema}.jdbc_ingestion_config`;
+  const workspaceUrl = workspaceBaseUrl();
+  const jobsFound = [];
+  const missing: string[] = [];
+  for (let offset = 0; offset < ingestionGroups.length; offset += 8) {
+    const batch = ingestionGroups.slice(offset, offset + 8);
+    const found = await Promise.all(
+      batch.map(async (ingestionGroup) => {
+        const job = await findLocationJob(jobName(ingestionGroup), configurationFqn);
+        if (!job?.job_id) return { ingestionGroup, job: undefined };
+        const runs = [];
+        for await (const run of workspace.jobs.listRuns({ job_id: job.job_id, limit: 10, expand_tasks: false })) {
+          runs.push({
+            run_id: run.run_id,
+            run_url: run.run_id ? `${workspaceUrl}/jobs/${job.job_id}/runs/${run.run_id}` : undefined,
+            run_name: run.run_name,
+            start_time: run.start_time,
+            end_time: run.end_time,
+            setup_duration: run.setup_duration,
+            execution_duration: run.execution_duration,
+            cleanup_duration: run.cleanup_duration,
+            state: run.state,
+          });
+          if (runs.length >= 10) break;
+        }
+        return {
+          ingestionGroup,
+          job: {
+            job_id: job.job_id,
+            settings: { name: job.settings?.name, schedule: job.settings?.schedule },
+            creator_user_name: job.creator_user_name,
+            created_time: job.created_time,
+            ingestion_group: ingestionGroup,
+            workspace_url: `${workspaceUrl}/jobs/${job.job_id}`,
+            runs,
+          },
+        };
+      })
+    );
+    for (const item of found) {
+      if (item.job) jobsFound.push(item.job);
+      else missing.push(item.ingestionGroup);
+    }
+  }
+  logger.debug('jobs.listed', { catalog, schema, groups: ingestionGroups.length, jobs: jobsFound.length });
+  return { jobs: jobsFound, missing };
+}
 
 /**
  * Reads back the settings a group's job was generated from, so they can be exported and re-created elsewhere.
@@ -201,7 +213,6 @@ async function readGroupJobSettings(ingestionGroup: string, configurationFqn: st
     if (!settings?.git_source?.git_url || parameters.get('configuration_fqn') !== configurationFqn) continue;
 
     const tasks = settings.tasks ?? [];
-    const cluster = settings.job_clusters?.find((item) => item.job_cluster_key === jobClusterKey)?.new_cluster;
     const pipelineId = tasks.find((task) => task.pipeline_task)?.pipeline_task?.pipeline_id;
     const pipeline = pipelineId
       ? await workspace.pipelines.get({ pipeline_id: pipelineId }).catch((error: unknown) => {
@@ -217,7 +228,6 @@ async function readGroupJobSettings(ingestionGroup: string, configurationFqn: st
     const jobIdentity = job.run_as_user_name ?? runAsIdentity(settings.run_as) ?? job.creator_user_name;
     const pipelineIdentity =
       pipeline?.run_as_user_name ?? runAsIdentity(pipeline?.run_as) ?? pipeline?.creator_user_name;
-    const performanceTarget = settings.performance_target ?? 'STANDARD';
     return {
       ingestionGroup,
       gitUrl: settings.git_source.git_url,
@@ -232,25 +242,7 @@ async function readGroupJobSettings(ingestionGroup: string, configurationFqn: st
             pauseStatus: settings.schedule.pause_status ?? 'UNPAUSED',
           }
         : defaultSchedule,
-      compute: cluster
-        ? {
-            mode: 'JOB_CLUSTER',
-            performanceTarget,
-            sparkVersion: cluster.spark_version ?? '',
-            driverNodeTypeId: cluster.driver_node_type_id ?? cluster.node_type_id ?? '',
-            workerNodeTypeId: cluster.node_type_id ?? '',
-            minWorkers: cluster.autoscale?.min_workers ?? cluster.num_workers ?? 1,
-            maxWorkers: cluster.autoscale?.max_workers ?? Math.max(cluster.num_workers ?? 1, 1),
-          }
-        : {
-            mode: 'SERVERLESS',
-            performanceTarget,
-            sparkVersion: '',
-            driverNodeTypeId: '',
-            workerNodeTypeId: '',
-            minWorkers: 1,
-            maxWorkers: 4,
-          },
+      compute: readJobCompute(settings),
       pipelineCompute:
         generatedPipeline && pipeline?.spec?.serverless === false
           ? {

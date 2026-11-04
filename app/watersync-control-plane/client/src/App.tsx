@@ -4,6 +4,7 @@ import { OverviewPage } from './components/OverviewPage';
 import { ConfigPage } from './components/ConfigPage';
 import { WatermarksPage } from './components/WatermarksPage';
 import { JobsPage } from './components/JobsPage';
+import { RowChecksPage } from './components/RowChecksPage';
 
 const router = createBrowserRouter([
   {
@@ -13,6 +14,7 @@ const router = createBrowserRouter([
       { path: '/config', element: <ConfigPage /> },
       { path: '/watermarks', element: <WatermarksPage /> },
       { path: '/jobs', element: <JobsPage /> },
+      { path: '/row-checks', element: <RowChecksPage /> },
     ],
   },
 ]);

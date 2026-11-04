@@ -7,6 +7,7 @@ test('control plane shell and primary navigation load', async ({ page }) => {
   await expect(page.getByRole('link', { name: 'Configuration' })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Watermarks' })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Jobs' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Row checks' })).toBeVisible();
 });
 
 test('configuration screen exposes lookup and create actions', async ({ page }) => {

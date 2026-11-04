@@ -9,6 +9,7 @@ from pyspark.sql import SparkSession
 from watersync.config_planner import IngestionConfigPlanner
 from watersync.ingestion import JdbcIngestionOrchestrator
 from watersync.models import JdbcRuntimeSettings, JobProvisioningSettings
+from watersync.row_check import RowCheckRunner
 from watersync.utils import IngestionJobProvisioner, LakebaseTestDatabaseSetup, UnityCatalogSetup
 
 
@@ -68,6 +69,36 @@ def run_ingestion_main(**kwargs) -> None:
     runtime = build_runtime_settings(args)
     orchestrator = JdbcIngestionOrchestrator(spark=spark, runtime=runtime)
     print(json.dumps(orchestrator.run_selected_ingestion(), default=str))
+
+
+def row_check_main(**kwargs) -> None:
+    if kwargs:
+        args = _namespace_or_kwargs(kwargs)
+    else:
+        parser = argparse.ArgumentParser(description="Compare source and target tables (basic: counts, detailed: rows)")
+        parser.add_argument("--configuration-fqn", dest="configuration_fqn", required=True)
+        parser.add_argument("--watermark-fqn", dest="watermark_fqn", required=True)
+        parser.add_argument("--row-check-fqn", dest="row_check_fqn", required=True)
+        parser.add_argument("--ingestion-group", dest="ingestion_group", default="")
+        parser.add_argument("--source-table-name", default="")
+        parser.add_argument("--check-mode", dest="check_mode", choices=["basic", "detailed"], default="basic")
+        parser.add_argument("--max-parallel-tables", dest="max_parallel_tables", default=4, type=int)
+        parser.add_argument("--range-column", dest="range_column", default="")
+        parser.add_argument("--range-from", dest="range_from", default="")
+        parser.add_argument("--range-to", dest="range_to", default="")
+        args = parser.parse_args()
+
+    runner = RowCheckRunner(
+        spark=active_spark(),
+        runtime=build_runtime_settings(args),
+        results_fqn=args.row_check_fqn,
+        check_mode=getattr(args, "check_mode", "basic"),
+        max_parallel_tables=int(getattr(args, "max_parallel_tables", 4)),
+        range_column=getattr(args, "range_column", ""),
+        range_from=getattr(args, "range_from", ""),
+        range_to=getattr(args, "range_to", ""),
+    )
+    print(json.dumps(runner.run(), default=str))
 
 
 def create_job_main(**kwargs) -> None:
