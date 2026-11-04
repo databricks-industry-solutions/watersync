@@ -25,7 +25,7 @@ The config table FQN follows the pattern `<catalog>.<schema>.jdbc_ingestion_conf
 | `partition_column` | STRING | Optional | Column for JDBC parallel read partitioning (e.g. `id`). Improves read parallelism. |
 | `predicate_column` | STRING | Optional | Column for predicate pushdown filtering. |
 | `epic_csa_enabled` | BOOLEAN | ✅ | `true` to use Epic CSA (Change Sequence Auditing) worker instead of timestamp watermark. **Only valid with `incremental` type**. When true, `watermark_column` is not required. |
-| `epic_change_method` | STRING | Optional | With `epic_csa_enabled = true`: `csa_table` (default when NULL, reads the CSA tables) or `stored_procedure` (uses Epic's stored procedure). Not shown in the app yet; set it with SQL. |
+| `epic_change_method` | STRING | Optional | With `epic_csa_enabled = true`: `csa_table` (default when NULL, reads the CSA tables) or `stored_procedure` (uses Epic's stored procedure). |
 | `epic_change_procedure` | STRING | Optional | With `stored_procedure`: Epic's stored procedure. NULL uses `EPIC_UTIL.ESP_CR_ALTERED_ROWS`. |
 | `epic_change_skip_update_date` | BOOLEAN | Optional | With `stored_procedure`: `true` doesn't ask the procedure for each row's update time. |
 | `epic_change_column_names` | STRING | Optional | With `stored_procedure`: comma-separated columns; only changes to them are read. |

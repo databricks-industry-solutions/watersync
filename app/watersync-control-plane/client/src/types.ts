@@ -16,6 +16,10 @@ export type ConfigRow = {
   partition_column: string | null;
   predicate_column: string | null;
   epic_csa_enabled: boolean;
+  epic_change_method: string;
+  epic_change_procedure: string | null;
+  epic_change_skip_update_date: boolean;
+  epic_change_column_names: string | null;
   auto_cdc_from_snapshot: boolean;
   jdbc_url: string | null;
   jdbc_user: string | null;

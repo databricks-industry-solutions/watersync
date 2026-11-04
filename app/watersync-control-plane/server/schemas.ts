@@ -2,6 +2,13 @@ import { z } from 'zod';
 
 export const identifierPart = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
 const coercedBoolean = z.preprocess((val) => (typeof val === 'string' ? val === 'true' : val), z.boolean());
+// An empty field means "not set".
+const optionalText = (schema: z.ZodString) =>
+  z.preprocess((val) => (typeof val === 'string' && !val.trim() ? null : val), schema.nullable().optional());
+// Same rules as the Python worker: the procedure and column names are put into SQL.
+const procedureName = /^[A-Za-z_][\w$#]*(\.[A-Za-z_][\w$#]*){0,2}$/;
+const columnNames = /^[A-Za-z_][\w$#]*(\s*,\s*[A-Za-z_][\w$#]*)*$/;
+export const epicChangeMethods = ['csa_table', 'stored_procedure'] as const;
 export const locationSchema = z.object({ catalog: identifierPart, schema: identifierPart });
 export const configSchema = locationSchema
   .extend({
@@ -17,6 +24,16 @@ export const configSchema = locationSchema
     partitionColumn: z.string().nullable().optional(),
     predicateColumn: z.string().nullable().optional(),
     epicCsaEnabled: coercedBoolean,
+    // Optional so export files written before these settings existed still import.
+    epicChangeMethod: z
+      .enum(epicChangeMethods)
+      .nullish()
+      .transform((value) => value ?? 'csa_table'),
+    epicChangeProcedure: optionalText(
+      z.string().trim().regex(procedureName, 'Use a procedure name such as EPIC_UTIL.ESP_CR_ALTERED_ROWS')
+    ),
+    epicChangeSkipUpdateDate: coercedBoolean.optional().default(false),
+    epicChangeColumnNames: optionalText(z.string().trim().regex(columnNames, 'Use comma-separated column names')),
     autoCdcFromSnapshot: coercedBoolean,
     jdbcUrl: z.string().nullable().optional(),
     jdbcUser: z.string().nullable().optional(),
@@ -36,6 +53,13 @@ export const configSchema = locationSchema
         code: 'custom',
         path: ['epicCsaEnabled'],
         message: 'EPIC CSA requires incremental ingestion',
+      });
+    }
+    if (value.epicChangeMethod === 'stored_procedure' && !value.epicCsaEnabled) {
+      context.addIssue({
+        code: 'custom',
+        path: ['epicChangeMethod'],
+        message: 'The EPIC stored procedure requires EPIC CSA mode',
       });
     }
     if (value.autoCdcFromSnapshot && value.ingestionType !== 'full') {
@@ -252,6 +276,20 @@ export const importPayloadSchema = locationSchema.extend({
   // Validate and summarize without writing anything.
   dryRun: z.boolean().optional().default(false),
 });
+
+/**
+ * The EPIC stored-procedure columns as stored: the method only for EPIC CSA rows, and the procedure
+ * settings only when the stored procedure is used. Shared by the single-row save and the import.
+ */
+export const epicChangeColumns = (config: ConfigPayload) => {
+  const storedProcedure = config.epicCsaEnabled && config.epicChangeMethod === 'stored_procedure';
+  return {
+    epic_change_method: config.epicCsaEnabled ? config.epicChangeMethod : null,
+    epic_change_procedure: storedProcedure ? (config.epicChangeProcedure ?? null) : null,
+    epic_change_skip_update_date: storedProcedure && config.epicChangeSkipUpdateDate,
+    epic_change_column_names: storedProcedure ? (config.epicChangeColumnNames ?? null) : null,
+  };
+};
 
 export type SourceDiscovery = z.infer<typeof sourceDiscoverySchema>;
 export type SourceDatabaseType = z.infer<typeof sourceDatabaseType>;

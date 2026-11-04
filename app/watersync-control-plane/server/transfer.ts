@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import {
   configSchema,
+  epicChangeColumns,
   jobPayloadSchema,
   transferFormat,
   transferVersion,
@@ -24,6 +25,10 @@ const configColumns = [
   ['partition_column', 'partitionColumn', 'STRING'],
   ['predicate_column', 'predicateColumn', 'STRING'],
   ['epic_csa_enabled', 'epicCsaEnabled', 'BOOLEAN'],
+  ['epic_change_method', 'epicChangeMethod', 'STRING'],
+  ['epic_change_procedure', 'epicChangeProcedure', 'STRING'],
+  ['epic_change_skip_update_date', 'epicChangeSkipUpdateDate', 'BOOLEAN'],
+  ['epic_change_column_names', 'epicChangeColumnNames', 'STRING'],
   ['auto_cdc_from_snapshot', 'autoCdcFromSnapshot', 'BOOLEAN'],
   ['jdbc_url', 'jdbcUrl', 'STRING'],
   ['jdbc_user', 'jdbcUser', 'STRING'],
@@ -49,6 +54,8 @@ export async function exportConfiguration(catalog: string, schema: string) {
     `SELECT ingestion_group, source_table_name, staging_table_fqn, target_table_fqn,
        lower(coalesce(ingestion_type, 'incremental')) AS ingestion_type, key_columns, watermark_column,
        partition_column, predicate_column, coalesce(epic_csa_enabled, false) AS epic_csa_enabled,
+       coalesce(epic_change_method, 'csa_table') AS epic_change_method, epic_change_procedure,
+       coalesce(epic_change_skip_update_date, false) AS epic_change_skip_update_date, epic_change_column_names,
        coalesce(auto_cdc_from_snapshot, false) AS auto_cdc_from_snapshot, jdbc_url, jdbc_user, jdbc_secret_scope,
        jdbc_secret_key, uc_secret_name, connection_name, connection_database,
        coalesce(watermark_threshold_minutes, 5) AS watermark_threshold_minutes,
@@ -142,6 +149,7 @@ const toConfigRow = (config: ConfigPayload) => ({
   watermark_column:
     config.ingestionType === 'incremental' && !config.epicCsaEnabled ? (config.watermarkColumn ?? null) : null,
   connection_database: config.connectionName ? (config.connectionDatabase ?? null) : null,
+  ...epicChangeColumns(config),
 });
 
 async function upsertConfigs(catalog: string, schema: string, configs: ConfigPayload[]) {

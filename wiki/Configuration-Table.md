@@ -56,7 +56,7 @@ VALUES
    false, 'clarity_conn', 5, 10000, 8, current_timestamp(), true);
 ```
 
-To load an EPIC table through Epic's stored procedure instead of the CSA tables, set `epic_change_method` on an EPIC CSA row. The Control Plane app doesn't show it yet, so set it with SQL:
+To load an EPIC table through Epic's stored procedure instead of the CSA tables, pick **Epic stored procedure** as the EPIC change source in the Control Plane app, or set `epic_change_method` on an EPIC CSA row with SQL:
 
 ```sql
 UPDATE main.watersync.jdbc_ingestion_config
@@ -65,7 +65,7 @@ SET epic_change_method = 'stored_procedure',
 WHERE ingestion_group = 'epic' AND source_table_name = 'dbo.PAT_ENC';
 ```
 
-Run `UnityCatalogSetup.create_config_table()` (or the notebook's `setup_uc` action) first on an existing config table, to add the columns.
+On an existing config table, selecting its location in the Control Plane app adds the columns; otherwise run `UnityCatalogSetup.create_config_table()` (or the notebook's `setup_uc` action) first.
 
 ## JDBC Connection Options
 

@@ -66,6 +66,42 @@ describe('validateImport', () => {
     });
   });
 
+  it('accepts files written before the EPIC stored-procedure settings existed', () => {
+    const { configs } = validateImport({ ...location, file: { configs: [config()], jobs: [] } });
+    expect(configs[0]).toMatchObject({
+      epicChangeMethod: 'csa_table',
+      epicChangeSkipUpdateDate: false,
+    });
+  });
+
+  it('rejects EPIC stored-procedure settings that are invalid or need EPIC CSA', () => {
+    const csa = { watermarkColumn: null, epicCsaEnabled: true, epicChangeMethod: 'stored_procedure' };
+    let error: unknown;
+    try {
+      validateImport({
+        ...location,
+        file: {
+          configs: [
+            config({ epicChangeMethod: 'stored_procedure' }),
+            config({ ...csa, sourceTableName: 'a', epicChangeProcedure: 'x; DROP TABLE y' }),
+            config({ ...csa, sourceTableName: 'b', epicChangeColumnNames: "A'--" }),
+            config({ ...csa, sourceTableName: 'c', epicChangeMethod: 'cdc' }),
+          ],
+          jobs: [],
+        },
+      });
+    } catch (caught) {
+      error = caught;
+    }
+    const paths = (error as z.ZodError).issues.map((issue) => issue.path.join('.'));
+    expect(paths).toEqual([
+      'file.configs.0.epicChangeMethod',
+      'file.configs.1.epicChangeProcedure',
+      'file.configs.2.epicChangeColumnNames',
+      'file.configs.3.epicChangeMethod',
+    ]);
+  });
+
   it('reports every invalid entry and duplicate with its position in the file', () => {
     let error: unknown;
     try {
@@ -136,6 +172,42 @@ describe('importConfiguration', () => {
       removedCount: 2,
       jobs: [{ ingestionGroup: 'sales', jobId: 7, pipelineId: 'p', action: 'created' }],
     });
+  });
+
+  it('stores EPIC stored-procedure settings only where they apply', async () => {
+    const csa = { watermarkColumn: null, epicCsaEnabled: true };
+    const procedure = { epicChangeProcedure: 'EPIC_UTIL.ESP_CR_ALTERED_ROWS', epicChangeSkipUpdateDate: true };
+    const entries = validateImport({
+      ...location,
+      file: {
+        configs: [
+          config({ ...csa, ...procedure, epicChangeMethod: 'stored_procedure', epicChangeColumnNames: 'A, B' }),
+          config({ ...csa, ...procedure, sourceTableName: 'public.csa' }),
+          config({ ...procedure, sourceTableName: 'public.plain' }),
+          config({
+            ...csa,
+            sourceTableName: 'public.default',
+            epicChangeMethod: 'stored_procedure',
+            epicChangeProcedure: '',
+          }),
+        ],
+        jobs: [],
+      },
+    });
+
+    await importConfiguration('dev', 'watersync', entries, { replaceGroups: false, deployJobs: false });
+
+    const rows = JSON.parse(execute.mock.calls[0][1]![0].value!) as Record<string, unknown>[];
+    expect(rows[0]).toMatchObject({
+      epic_change_method: 'stored_procedure',
+      epic_change_procedure: 'EPIC_UTIL.ESP_CR_ALTERED_ROWS',
+      epic_change_skip_update_date: true,
+      epic_change_column_names: 'A, B',
+    });
+    // CSA tables and non-EPIC rows keep no procedure settings; an empty procedure means Epic's default.
+    expect(rows[1]).toMatchObject({ epic_change_method: 'csa_table', epic_change_procedure: null });
+    expect(rows[2]).toMatchObject({ epic_change_method: null, epic_change_skip_update_date: false });
+    expect(rows[3]).toMatchObject({ epic_change_method: 'stored_procedure', epic_change_procedure: null });
   });
 
   it('keeps going when a job fails and leaves other rows alone without replaceGroups', async () => {

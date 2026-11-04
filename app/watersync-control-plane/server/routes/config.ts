@@ -1,5 +1,5 @@
 import type { Application } from 'express';
-import { configSchema, keySchema, watermarkSchema, locationSchema } from '../schemas.js';
+import { configSchema, epicChangeColumns, keySchema, watermarkSchema, locationSchema } from '../schemas.js';
 import { execute, ensureMigrations, parameter, tableName } from '../sql.js';
 import { apiRoute, logger } from '../logging.js';
 
@@ -28,6 +28,7 @@ export function registerConfigRoutes(app: Application) {
     '/api/config',
     apiRoute('config_save', async (req, res) => {
       const body = configSchema.parse(req.body);
+      const epicChange = epicChangeColumns(body);
       const target = tableName(body.catalog, body.schema, 'jdbc_ingestion_config');
       await ensureMigrations(body.catalog, body.schema);
       await execute(
@@ -39,6 +40,9 @@ export function registerConfigRoutes(app: Application) {
            ingestion_type=:ingestion_type, key_columns=:key_columns,
            watermark_column=:watermark_column, partition_column=:partition_column,
            predicate_column=:predicate_column, epic_csa_enabled=:epic_csa_enabled,
+           epic_change_method=:epic_change_method, epic_change_procedure=:epic_change_procedure,
+           epic_change_skip_update_date=:epic_change_skip_update_date,
+           epic_change_column_names=:epic_change_column_names,
            auto_cdc_from_snapshot=:auto_cdc_from_snapshot,
            jdbc_url=:jdbc_url, jdbc_user=:jdbc_user, jdbc_secret_scope=:jdbc_secret_scope,
            jdbc_secret_key=:jdbc_secret_key, uc_secret_name=:uc_secret_name, connection_name=:connection_name,
@@ -47,12 +51,14 @@ export function registerConfigRoutes(app: Application) {
            num_partitions=:num_partitions,
            update_dttm=current_timestamp(), enabled=:enabled
          WHEN NOT MATCHED THEN INSERT (ingestion_group, source_table_name, staging_table_fqn, target_table_fqn,
-           ingestion_type, key_columns, watermark_column, partition_column, predicate_column, epic_csa_enabled, auto_cdc_from_snapshot,
-           jdbc_url, jdbc_user, jdbc_secret_scope, jdbc_secret_key, uc_secret_name, connection_name, connection_database,
+           ingestion_type, key_columns, watermark_column, partition_column, predicate_column, epic_csa_enabled,
+           epic_change_method, epic_change_procedure, epic_change_skip_update_date, epic_change_column_names,
+           auto_cdc_from_snapshot, jdbc_url, jdbc_user, jdbc_secret_scope, jdbc_secret_key, uc_secret_name, connection_name, connection_database,
            watermark_threshold_minutes, fetch_size, num_partitions, update_dttm, enabled)
          VALUES (s.ingestion_group, s.source_table_name, :staging_table_fqn, :target_table_fqn,
-           :ingestion_type, :key_columns, :watermark_column, :partition_column, :predicate_column, :epic_csa_enabled, :auto_cdc_from_snapshot,
-           :jdbc_url, :jdbc_user, :jdbc_secret_scope, :jdbc_secret_key, :uc_secret_name, :connection_name, :connection_database,
+           :ingestion_type, :key_columns, :watermark_column, :partition_column, :predicate_column, :epic_csa_enabled,
+           :epic_change_method, :epic_change_procedure, :epic_change_skip_update_date, :epic_change_column_names,
+           :auto_cdc_from_snapshot, :jdbc_url, :jdbc_user, :jdbc_secret_scope, :jdbc_secret_key, :uc_secret_name, :connection_name, :connection_database,
            :watermark_threshold_minutes, :fetch_size, :num_partitions, current_timestamp(), :enabled)`,
         [
           parameter('original_ingestion_group', body.originalIngestionGroup),
@@ -70,6 +76,10 @@ export function registerConfigRoutes(app: Application) {
           parameter('partition_column', body.partitionColumn),
           parameter('predicate_column', body.predicateColumn),
           parameter('epic_csa_enabled', String(body.epicCsaEnabled), 'BOOLEAN'),
+          parameter('epic_change_method', epicChange.epic_change_method),
+          parameter('epic_change_procedure', epicChange.epic_change_procedure),
+          parameter('epic_change_skip_update_date', String(epicChange.epic_change_skip_update_date), 'BOOLEAN'),
+          parameter('epic_change_column_names', epicChange.epic_change_column_names),
           parameter('auto_cdc_from_snapshot', String(body.autoCdcFromSnapshot), 'BOOLEAN'),
           parameter('jdbc_url', body.jdbcUrl),
           parameter('jdbc_user', body.jdbcUser),

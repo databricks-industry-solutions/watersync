@@ -182,6 +182,7 @@ Applied ids are tracked in `<catalog>.<schema>._watersync_migrations`. To add on
 | `001_create_tables`           | `jdbc_ingestion_config` and `jdbc_ingestion_watermark` |
 | `002_add_uc_secret_name`      | `uc_secret_name` column                                |
 | `003_add_connection_database` | `connection_database` column                           |
+| `004_add_epic_change_columns` | `epic_change_*` columns                                |
 
 ## Logging and Diagnostics
 

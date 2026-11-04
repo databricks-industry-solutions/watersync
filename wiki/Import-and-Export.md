@@ -14,10 +14,10 @@ Typical uses:
 
 There are two ways to run it, with identical behavior:
 
-|                       | Where                                            | Best for                                          |
-| --------------------- | ------------------------------------------------ | ------------------------------------------------- |
+|                       | Where                                                | Best for                                          |
+| --------------------- | ---------------------------------------------------- | ------------------------------------------------- |
 | **Control Plane app** | **Export** / **Import** in the header, on every page | Ad hoc exports, reviewing a file before importing |
-| **Python script**     | `scripts/watersync_config.py`                    | Deployment pipelines and automation               |
+| **Python script**     | `scripts/watersync_config.py`                        | Deployment pipelines and automation               |
 
 The script calls the deployed app, so validation, the config write, and job creation all run the same code.
 
@@ -248,6 +248,10 @@ script. A non-zero exit code fails the step.
       "partitionColumn": null,
       "predicateColumn": null,
       "epicCsaEnabled": false,
+      "epicChangeMethod": "csa_table",
+      "epicChangeProcedure": null,
+      "epicChangeSkipUpdateDate": false,
+      "epicChangeColumnNames": null,
       "autoCdcFromSnapshot": false,
       "jdbcUrl": null,
       "jdbcUser": null,
@@ -310,30 +314,34 @@ empty or omitted, so a file can carry only tables or only job settings. A file h
 Each entry is one row of `jdbc_ingestion_config`. See
 [Configuration Table](Configuration-Table.md) for the meaning of each column.
 
-| Field                       | Column                        | Type                    | Notes                                                             |
-| --------------------------- | ----------------------------- | ----------------------- | ----------------------------------------------------------------- |
-| `ingestionGroup`            | `ingestion_group`             | string                  | Required. With `sourceTableName`, the key of the row.             |
-| `sourceTableName`           | `source_table_name`           | string                  | Required.                                                         |
-| `stagingTableFqn`           | `staging_table_fqn`           | string \| null          | Required for snapshot CDC.                                        |
-| `targetTableFqn`            | `target_table_fqn`            | string                  | Required, `catalog.schema.table`.                                 |
-| `ingestionType`             | `ingestion_type`              | `incremental` \| `full` |                                                                   |
-| `keyColumns`                | `key_columns`                 | string \| null          | Comma-separated. Required for incremental and snapshot CDC.       |
-| `watermarkColumn`           | `watermark_column`            | string \| null          | Required for incremental unless EPIC CSA. Dropped for full loads. |
-| `partitionColumn`           | `partition_column`            | string \| null          |                                                                   |
-| `predicateColumn`           | `predicate_column`            | string \| null          |                                                                   |
-| `epicCsaEnabled`            | `epic_csa_enabled`            | boolean                 | Incremental only.                                                 |
-| `autoCdcFromSnapshot`       | `auto_cdc_from_snapshot`      | boolean                 | Full only.                                                        |
-| `jdbcUrl`                   | `jdbc_url`                    | string \| null          | Direct JDBC.                                                      |
-| `jdbcUser`                  | `jdbc_user`                   | string \| null          | Direct JDBC.                                                      |
-| `jdbcSecretScope`           | `jdbc_secret_scope`           | string \| null          | Secret scope **name**.                                            |
-| `jdbcSecretKey`             | `jdbc_secret_key`             | string \| null          | Secret key **name**.                                              |
-| `ucSecretName`              | `uc_secret_name`              | string \| null          | UC secret name.                                                   |
-| `connectionName`            | `connection_name`             | string \| null          | UC connection.                                                    |
-| `connectionDatabase`        | `connection_database`         | string \| null          | Kept only together with `connectionName`.                         |
-| `watermarkThresholdMinutes` | `watermark_threshold_minutes` | integer ≥ 0             |                                                                   |
-| `fetchSize`                 | `fetch_size`                  | integer > 0             |                                                                   |
-| `numPartitions`             | `num_partitions`              | integer > 0             |                                                                   |
-| `enabled`                   | `enabled`                     | boolean                 |                                                                   |
+| Field                       | Column                         | Type                              | Notes                                                             |
+| --------------------------- | ------------------------------ | --------------------------------- | ----------------------------------------------------------------- |
+| `ingestionGroup`            | `ingestion_group`              | string                            | Required. With `sourceTableName`, the key of the row.             |
+| `sourceTableName`           | `source_table_name`            | string                            | Required.                                                         |
+| `stagingTableFqn`           | `staging_table_fqn`            | string \| null                    | Required for snapshot CDC.                                        |
+| `targetTableFqn`            | `target_table_fqn`             | string                            | Required, `catalog.schema.table`.                                 |
+| `ingestionType`             | `ingestion_type`               | `incremental` \| `full`           |                                                                   |
+| `keyColumns`                | `key_columns`                  | string \| null                    | Comma-separated. Required for incremental and snapshot CDC.       |
+| `watermarkColumn`           | `watermark_column`             | string \| null                    | Required for incremental unless EPIC CSA. Dropped for full loads. |
+| `partitionColumn`           | `partition_column`             | string \| null                    |                                                                   |
+| `predicateColumn`           | `predicate_column`             | string \| null                    |                                                                   |
+| `epicCsaEnabled`            | `epic_csa_enabled`             | boolean                           | Incremental only.                                                 |
+| `epicChangeMethod`          | `epic_change_method`           | `csa_table` \| `stored_procedure` | Default `csa_table`. `stored_procedure` needs EPIC CSA.           |
+| `epicChangeProcedure`       | `epic_change_procedure`        | string \| null                    | With `stored_procedure`. Null uses Epic's default procedure.      |
+| `epicChangeSkipUpdateDate`  | `epic_change_skip_update_date` | boolean                           | With `stored_procedure`. Default `false`.                         |
+| `epicChangeColumnNames`     | `epic_change_column_names`     | string \| null                    | With `stored_procedure`. Comma-separated.                         |
+| `autoCdcFromSnapshot`       | `auto_cdc_from_snapshot`       | boolean                           | Full only.                                                        |
+| `jdbcUrl`                   | `jdbc_url`                     | string \| null                    | Direct JDBC.                                                      |
+| `jdbcUser`                  | `jdbc_user`                    | string \| null                    | Direct JDBC.                                                      |
+| `jdbcSecretScope`           | `jdbc_secret_scope`            | string \| null                    | Secret scope **name**.                                            |
+| `jdbcSecretKey`             | `jdbc_secret_key`              | string \| null                    | Secret key **name**.                                              |
+| `ucSecretName`              | `uc_secret_name`               | string \| null                    | UC secret name.                                                   |
+| `connectionName`            | `connection_name`              | string \| null                    | UC connection.                                                    |
+| `connectionDatabase`        | `connection_database`          | string \| null                    | Kept only together with `connectionName`.                         |
+| `watermarkThresholdMinutes` | `watermark_threshold_minutes`  | integer ≥ 0                       |                                                                   |
+| `fetchSize`                 | `fetch_size`                   | integer > 0                       |                                                                   |
+| `numPartitions`             | `num_partitions`               | integer > 0                       |                                                                   |
+| `enabled`                   | `enabled`                      | boolean                           |                                                                   |
 
 ### `jobs[]`
 
