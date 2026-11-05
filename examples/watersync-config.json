@@ -1,0 +1,585 @@
+{
+  "format": "watersync-config",
+  "version": 1,
+  "configs": [
+    {
+      "ingestionGroup": "clarity_csa",
+      "sourceTableName": "dbo.PAT_ENC",
+      "stagingTableFqn": "hls.bronze_clarity.staging_pat_enc",
+      "targetTableFqn": "hls.silver_clarity.pat_enc",
+      "ingestionType": "incremental",
+      "keyColumns": "PAT_ENC_CSN_ID",
+      "watermarkColumn": null,
+      "partitionColumn": "PAT_ENC_CSN_ID",
+      "predicateColumn": null,
+      "epicCsaEnabled": true,
+      "epicChangeMethod": "csa_table",
+      "epicChangeProcedure": null,
+      "epicChangeSkipUpdateDate": false,
+      "epicChangeColumnNames": null,
+      "autoCdcFromSnapshot": false,
+      "jdbcUrl": null,
+      "jdbcUser": null,
+      "jdbcSecretScope": null,
+      "jdbcSecretKey": null,
+      "ucSecretName": null,
+      "connectionName": "clarity_sqlserver",
+      "connectionDatabase": "Clarity",
+      "watermarkThresholdMinutes": 5,
+      "fetchSize": 10000,
+      "numPartitions": 16,
+      "enabled": true
+    },
+    {
+      "ingestionGroup": "clarity_csa",
+      "sourceTableName": "dbo.PATIENT",
+      "stagingTableFqn": "hls.bronze_clarity.staging_patient",
+      "targetTableFqn": "hls.silver_clarity.patient",
+      "ingestionType": "incremental",
+      "keyColumns": "PAT_ID",
+      "watermarkColumn": null,
+      "partitionColumn": null,
+      "predicateColumn": null,
+      "epicCsaEnabled": true,
+      "epicChangeMethod": "csa_table",
+      "epicChangeProcedure": null,
+      "epicChangeSkipUpdateDate": false,
+      "epicChangeColumnNames": null,
+      "autoCdcFromSnapshot": false,
+      "jdbcUrl": null,
+      "jdbcUser": null,
+      "jdbcSecretScope": null,
+      "jdbcSecretKey": null,
+      "ucSecretName": null,
+      "connectionName": "clarity_sqlserver",
+      "connectionDatabase": "Clarity",
+      "watermarkThresholdMinutes": 5,
+      "fetchSize": 10000,
+      "numPartitions": 8,
+      "enabled": true
+    },
+    {
+      "ingestionGroup": "clarity_csa",
+      "sourceTableName": "dbo.PAT_ENC_DX",
+      "stagingTableFqn": "hls.bronze_clarity.staging_pat_enc_dx",
+      "targetTableFqn": "hls.silver_clarity.pat_enc_dx",
+      "ingestionType": "incremental",
+      "keyColumns": "PAT_ENC_CSN_ID,LINE",
+      "watermarkColumn": null,
+      "partitionColumn": "PAT_ENC_CSN_ID",
+      "predicateColumn": null,
+      "epicCsaEnabled": true,
+      "epicChangeMethod": "csa_table",
+      "epicChangeProcedure": null,
+      "epicChangeSkipUpdateDate": false,
+      "epicChangeColumnNames": null,
+      "autoCdcFromSnapshot": false,
+      "jdbcUrl": null,
+      "jdbcUser": null,
+      "jdbcSecretScope": null,
+      "jdbcSecretKey": null,
+      "ucSecretName": null,
+      "connectionName": "clarity_sqlserver",
+      "connectionDatabase": "Clarity",
+      "watermarkThresholdMinutes": 5,
+      "fetchSize": 10000,
+      "numPartitions": 8,
+      "enabled": true
+    },
+    {
+      "ingestionGroup": "clarity_sp",
+      "sourceTableName": "dbo.ORDER_PROC",
+      "stagingTableFqn": "hls.bronze_clarity.staging_order_proc",
+      "targetTableFqn": "hls.silver_clarity.order_proc",
+      "ingestionType": "incremental",
+      "keyColumns": "ORDER_PROC_ID",
+      "watermarkColumn": null,
+      "partitionColumn": "ORDER_PROC_ID",
+      "predicateColumn": null,
+      "epicCsaEnabled": true,
+      "epicChangeMethod": "stored_procedure",
+      "epicChangeProcedure": null,
+      "epicChangeSkipUpdateDate": false,
+      "epicChangeColumnNames": null,
+      "autoCdcFromSnapshot": false,
+      "jdbcUrl": "jdbc:sqlserver://clarity.example.org:1433;databaseName=Clarity;encrypt=true",
+      "jdbcUser": "svc_watersync",
+      "jdbcSecretScope": null,
+      "jdbcSecretKey": null,
+      "ucSecretName": "hls.watersync.clarity_password",
+      "connectionName": null,
+      "connectionDatabase": null,
+      "watermarkThresholdMinutes": 5,
+      "fetchSize": 10000,
+      "numPartitions": 16,
+      "enabled": true
+    },
+    {
+      "ingestionGroup": "clarity_sp",
+      "sourceTableName": "dbo.HSP_ACCOUNT",
+      "stagingTableFqn": "hls.bronze_clarity.staging_hsp_account",
+      "targetTableFqn": "hls.silver_clarity.hsp_account",
+      "ingestionType": "incremental",
+      "keyColumns": "HSP_ACCOUNT_ID",
+      "watermarkColumn": null,
+      "partitionColumn": "HSP_ACCOUNT_ID",
+      "predicateColumn": null,
+      "epicCsaEnabled": true,
+      "epicChangeMethod": "stored_procedure",
+      "epicChangeProcedure": "EPIC_UTIL.ESP_CR_ALTERED_ROWS",
+      "epicChangeSkipUpdateDate": false,
+      "epicChangeColumnNames": "ACCT_BILLSTS_HA_C,TOT_CHGS,TOT_PMTS",
+      "autoCdcFromSnapshot": false,
+      "jdbcUrl": "jdbc:sqlserver://clarity.example.org:1433;databaseName=Clarity;encrypt=true",
+      "jdbcUser": "svc_watersync",
+      "jdbcSecretScope": null,
+      "jdbcSecretKey": null,
+      "ucSecretName": "hls.watersync.clarity_password",
+      "connectionName": null,
+      "connectionDatabase": null,
+      "watermarkThresholdMinutes": 5,
+      "fetchSize": 10000,
+      "numPartitions": 8,
+      "enabled": true
+    },
+    {
+      "ingestionGroup": "clarity_sp",
+      "sourceTableName": "dbo.CLARITY_ADT",
+      "stagingTableFqn": "hls.bronze_clarity.staging_clarity_adt",
+      "targetTableFqn": "hls.silver_clarity.clarity_adt",
+      "ingestionType": "incremental",
+      "keyColumns": "EVENT_ID",
+      "watermarkColumn": null,
+      "partitionColumn": "EVENT_ID",
+      "predicateColumn": null,
+      "epicCsaEnabled": true,
+      "epicChangeMethod": "stored_procedure",
+      "epicChangeProcedure": null,
+      "epicChangeSkipUpdateDate": true,
+      "epicChangeColumnNames": null,
+      "autoCdcFromSnapshot": false,
+      "jdbcUrl": "jdbc:sqlserver://clarity.example.org:1433;databaseName=Clarity;encrypt=true",
+      "jdbcUser": "svc_watersync",
+      "jdbcSecretScope": null,
+      "jdbcSecretKey": null,
+      "ucSecretName": "hls.watersync.clarity_password",
+      "connectionName": null,
+      "connectionDatabase": null,
+      "watermarkThresholdMinutes": 5,
+      "fetchSize": 10000,
+      "numPartitions": 16,
+      "enabled": true
+    },
+    {
+      "ingestionGroup": "clarity_reference",
+      "sourceTableName": "dbo.CLARITY_DEP",
+      "stagingTableFqn": null,
+      "targetTableFqn": "hls.silver_clarity.clarity_dep",
+      "ingestionType": "full",
+      "keyColumns": "DEPARTMENT_ID",
+      "watermarkColumn": null,
+      "partitionColumn": "DEPARTMENT_ID",
+      "predicateColumn": null,
+      "epicCsaEnabled": false,
+      "epicChangeMethod": "csa_table",
+      "epicChangeProcedure": null,
+      "epicChangeSkipUpdateDate": false,
+      "epicChangeColumnNames": null,
+      "autoCdcFromSnapshot": false,
+      "jdbcUrl": "jdbc:sqlserver://clarity.example.org:1433;databaseName=Clarity;encrypt=true",
+      "jdbcUser": "svc_watersync",
+      "jdbcSecretScope": "watersync",
+      "jdbcSecretKey": "clarity-password",
+      "ucSecretName": null,
+      "connectionName": null,
+      "connectionDatabase": null,
+      "watermarkThresholdMinutes": 5,
+      "fetchSize": 10000,
+      "numPartitions": 4,
+      "enabled": true
+    },
+    {
+      "ingestionGroup": "clarity_reference",
+      "sourceTableName": "dbo.CLARITY_SER",
+      "stagingTableFqn": "hls.bronze_clarity.staging_clarity_ser",
+      "targetTableFqn": "hls.silver_clarity.clarity_ser",
+      "ingestionType": "full",
+      "keyColumns": "PROV_ID",
+      "watermarkColumn": null,
+      "partitionColumn": null,
+      "predicateColumn": "PROV_ID",
+      "epicCsaEnabled": false,
+      "epicChangeMethod": "csa_table",
+      "epicChangeProcedure": null,
+      "epicChangeSkipUpdateDate": false,
+      "epicChangeColumnNames": null,
+      "autoCdcFromSnapshot": true,
+      "jdbcUrl": "jdbc:sqlserver://clarity.example.org:1433;databaseName=Clarity;encrypt=true",
+      "jdbcUser": "svc_watersync",
+      "jdbcSecretScope": "watersync",
+      "jdbcSecretKey": "clarity-password",
+      "ucSecretName": null,
+      "connectionName": null,
+      "connectionDatabase": null,
+      "watermarkThresholdMinutes": 5,
+      "fetchSize": 10000,
+      "numPartitions": 4,
+      "enabled": true
+    },
+    {
+      "ingestionGroup": "finance",
+      "sourceTableName": "public.invoices",
+      "stagingTableFqn": "hls.bronze_finance.staging_invoices",
+      "targetTableFqn": "hls.silver_finance.invoices",
+      "ingestionType": "incremental",
+      "keyColumns": "invoice_id",
+      "watermarkColumn": "updated_at",
+      "partitionColumn": "invoice_id",
+      "predicateColumn": null,
+      "epicCsaEnabled": false,
+      "epicChangeMethod": "csa_table",
+      "epicChangeProcedure": null,
+      "epicChangeSkipUpdateDate": false,
+      "epicChangeColumnNames": null,
+      "autoCdcFromSnapshot": false,
+      "jdbcUrl": null,
+      "jdbcUser": null,
+      "jdbcSecretScope": null,
+      "jdbcSecretKey": null,
+      "ucSecretName": null,
+      "connectionName": "finance_postgres",
+      "connectionDatabase": "finance",
+      "watermarkThresholdMinutes": 5,
+      "fetchSize": 10000,
+      "numPartitions": 8,
+      "enabled": true
+    },
+    {
+      "ingestionGroup": "finance",
+      "sourceTableName": "public.invoice_lines",
+      "stagingTableFqn": "hls.bronze_finance.staging_invoice_lines",
+      "targetTableFqn": "hls.silver_finance.invoice_lines",
+      "ingestionType": "incremental",
+      "keyColumns": "invoice_id,line_number",
+      "watermarkColumn": "updated_at",
+      "partitionColumn": "invoice_id",
+      "predicateColumn": null,
+      "epicCsaEnabled": false,
+      "epicChangeMethod": "csa_table",
+      "epicChangeProcedure": null,
+      "epicChangeSkipUpdateDate": false,
+      "epicChangeColumnNames": null,
+      "autoCdcFromSnapshot": false,
+      "jdbcUrl": null,
+      "jdbcUser": null,
+      "jdbcSecretScope": null,
+      "jdbcSecretKey": null,
+      "ucSecretName": null,
+      "connectionName": "finance_postgres",
+      "connectionDatabase": "finance",
+      "watermarkThresholdMinutes": 10,
+      "fetchSize": 20000,
+      "numPartitions": 8,
+      "enabled": false
+    }
+  ],
+  "jobs": [
+    {
+      "ingestionGroup": "clarity_csa",
+      "notebooks": {
+        "source": "GIT",
+        "gitUrl": "https://github.com/databricks-industry-solutions/watersync",
+        "gitProvider": null,
+        "referenceType": "BRANCH",
+        "reference": "main"
+      },
+      "library": {
+        "source": "GIT"
+      },
+      "foreachConcurrency": 4,
+      "cdcPipelineId": null,
+      "schedule": {
+        "enabled": true,
+        "quartzCronExpression": "0 0 * * * ?",
+        "timezoneId": "America/New_York",
+        "pauseStatus": "UNPAUSED"
+      },
+      "compute": {
+        "mode": "SERVERLESS",
+        "performanceTarget": "PERFORMANCE_OPTIMIZED",
+        "sparkVersion": "",
+        "driverNodeTypeId": "",
+        "workerNodeTypeId": "",
+        "minWorkers": 1,
+        "maxWorkers": 4
+      },
+      "pipelineCompute": {
+        "mode": "SERVERLESS",
+        "nodeTypeId": "",
+        "driverNodeTypeId": "",
+        "minWorkers": 1,
+        "maxWorkers": 4,
+        "photon": false
+      },
+      "runAs": {
+        "job": {
+          "mode": "DEFAULT",
+          "principal": ""
+        },
+        "pipeline": {
+          "mode": "SAME_AS_JOB",
+          "principal": ""
+        }
+      }
+    },
+    {
+      "ingestionGroup": "clarity_sp",
+      "notebooks": {
+        "source": "GIT",
+        "gitUrl": "https://dev.azure.com/example-org/clarity/_git/watersync",
+        "gitProvider": null,
+        "referenceType": "BRANCH",
+        "reference": "main"
+      },
+      "library": {
+        "source": "WHEEL",
+        "path": "/Volumes/hls/watersync/libs/watersync-0.4.0-py3-none-any.whl"
+      },
+      "foreachConcurrency": 4,
+      "cdcPipelineId": null,
+      "schedule": {
+        "enabled": true,
+        "quartzCronExpression": "0 0/15 * * * ?",
+        "timezoneId": "America/New_York",
+        "pauseStatus": "UNPAUSED"
+      },
+      "compute": {
+        "mode": "SERVERLESS",
+        "performanceTarget": "PERFORMANCE_OPTIMIZED",
+        "sparkVersion": "",
+        "driverNodeTypeId": "",
+        "workerNodeTypeId": "",
+        "minWorkers": 1,
+        "maxWorkers": 4
+      },
+      "pipelineCompute": {
+        "mode": "SERVERLESS",
+        "nodeTypeId": "",
+        "driverNodeTypeId": "",
+        "minWorkers": 1,
+        "maxWorkers": 4,
+        "photon": false
+      },
+      "runAs": {
+        "job": {
+          "mode": "SERVICE_PRINCIPAL",
+          "principal": "00000000-0000-0000-0000-000000000000"
+        },
+        "pipeline": {
+          "mode": "SAME_AS_JOB",
+          "principal": ""
+        }
+      }
+    },
+    {
+      "ingestionGroup": "clarity_reference",
+      "notebooks": {
+        "source": "WORKSPACE",
+        "basePath": "/Workspace/Users/data.engineer@example.org/.bundle/watersync/prod/files"
+      },
+      "library": {
+        "source": "WHEEL",
+        "path": "/Workspace/Users/data.engineer@example.org/.bundle/watersync/prod/artifacts/.internal/watersync-0.4.0-py3-none-any.whl"
+      },
+      "foreachConcurrency": 2,
+      "cdcPipelineId": null,
+      "schedule": {
+        "enabled": true,
+        "quartzCronExpression": "0 0 2 * * ?",
+        "timezoneId": "America/New_York",
+        "pauseStatus": "UNPAUSED"
+      },
+      "compute": {
+        "mode": "JOB_CLUSTER",
+        "performanceTarget": "PERFORMANCE_OPTIMIZED",
+        "sparkVersion": "17.3.x-scala2.13",
+        "driverNodeTypeId": "m5.xlarge",
+        "workerNodeTypeId": "m5.xlarge",
+        "minWorkers": 1,
+        "maxWorkers": 4
+      },
+      "pipelineCompute": {
+        "mode": "CLASSIC",
+        "nodeTypeId": "m5.xlarge",
+        "driverNodeTypeId": "m5.xlarge",
+        "minWorkers": 1,
+        "maxWorkers": 2,
+        "photon": false
+      },
+      "runAs": {
+        "job": {
+          "mode": "DEFAULT",
+          "principal": ""
+        },
+        "pipeline": {
+          "mode": "SAME_AS_JOB",
+          "principal": ""
+        }
+      }
+    },
+    {
+      "ingestionGroup": "finance",
+      "notebooks": {
+        "source": "GIT",
+        "gitUrl": "https://github.com/databricks-industry-solutions/watersync",
+        "gitProvider": null,
+        "referenceType": "TAG",
+        "reference": "v0.4.0"
+      },
+      "library": {
+        "source": "PIP",
+        "requirement": "watersync==0.4.0"
+      },
+      "foreachConcurrency": 4,
+      "cdcPipelineId": null,
+      "schedule": {
+        "enabled": false,
+        "quartzCronExpression": "0 0 6 * * ?",
+        "timezoneId": "UTC",
+        "pauseStatus": "PAUSED"
+      },
+      "compute": {
+        "mode": "SERVERLESS",
+        "performanceTarget": "STANDARD",
+        "sparkVersion": "",
+        "driverNodeTypeId": "",
+        "workerNodeTypeId": "",
+        "minWorkers": 1,
+        "maxWorkers": 4
+      },
+      "pipelineCompute": {
+        "mode": "SERVERLESS",
+        "nodeTypeId": "",
+        "driverNodeTypeId": "",
+        "minWorkers": 1,
+        "maxWorkers": 4,
+        "photon": false
+      },
+      "runAs": {
+        "job": {
+          "mode": "USER",
+          "principal": "data.engineer@example.org"
+        },
+        "pipeline": {
+          "mode": "SAME_AS_JOB",
+          "principal": ""
+        }
+      }
+    }
+  ],
+  "rowCheckJobs": [
+    {
+      "ingestionGroup": "",
+      "checkMode": "basic",
+      "rangeFrom": "",
+      "notebooks": {
+        "source": "GIT",
+        "gitUrl": "https://github.com/databricks-industry-solutions/watersync",
+        "gitProvider": null,
+        "referenceType": "BRANCH",
+        "reference": "main"
+      },
+      "library": {
+        "source": "GIT"
+      },
+      "maxParallelTables": 8,
+      "schedule": {
+        "enabled": true,
+        "quartzCronExpression": "0 0 7 * * ?",
+        "timezoneId": "America/New_York",
+        "pauseStatus": "UNPAUSED"
+      },
+      "compute": {
+        "mode": "SERVERLESS",
+        "performanceTarget": "PERFORMANCE_OPTIMIZED",
+        "sparkVersion": "",
+        "driverNodeTypeId": "",
+        "workerNodeTypeId": "",
+        "minWorkers": 1,
+        "maxWorkers": 4
+      },
+      "runAs": {
+        "mode": "DEFAULT",
+        "principal": ""
+      }
+    },
+    {
+      "ingestionGroup": "clarity_csa",
+      "checkMode": "detailed",
+      "rangeFrom": "-7d",
+      "notebooks": {
+        "source": "GIT",
+        "gitUrl": "https://github.com/databricks-industry-solutions/watersync",
+        "gitProvider": null,
+        "referenceType": "BRANCH",
+        "reference": "main"
+      },
+      "library": {
+        "source": "GIT"
+      },
+      "maxParallelTables": 4,
+      "schedule": {
+        "enabled": true,
+        "quartzCronExpression": "0 0 3 ? * SUN",
+        "timezoneId": "America/New_York",
+        "pauseStatus": "UNPAUSED"
+      },
+      "compute": {
+        "mode": "SERVERLESS",
+        "performanceTarget": "PERFORMANCE_OPTIMIZED",
+        "sparkVersion": "",
+        "driverNodeTypeId": "",
+        "workerNodeTypeId": "",
+        "minWorkers": 1,
+        "maxWorkers": 4
+      },
+      "runAs": {
+        "mode": "DEFAULT",
+        "principal": ""
+      }
+    },
+    {
+      "ingestionGroup": "clarity_reference",
+      "checkMode": "detailed",
+      "rangeFrom": "",
+      "notebooks": {
+        "source": "WORKSPACE",
+        "basePath": "/Workspace/Users/data.engineer@example.org/.bundle/watersync/prod/files"
+      },
+      "library": {
+        "source": "WHEEL",
+        "path": "/Workspace/Users/data.engineer@example.org/.bundle/watersync/prod/artifacts/.internal/watersync-0.4.0-py3-none-any.whl"
+      },
+      "maxParallelTables": 2,
+      "schedule": {
+        "enabled": true,
+        "quartzCronExpression": "0 0 4 ? * SUN",
+        "timezoneId": "America/New_York",
+        "pauseStatus": "UNPAUSED"
+      },
+      "compute": {
+        "mode": "JOB_CLUSTER",
+        "performanceTarget": "PERFORMANCE_OPTIMIZED",
+        "sparkVersion": "17.3.x-scala2.13",
+        "driverNodeTypeId": "m5.xlarge",
+        "workerNodeTypeId": "m5.xlarge",
+        "minWorkers": 1,
+        "maxWorkers": 2
+      },
+      "runAs": {
+        "mode": "DEFAULT",
+        "principal": ""
+      }
+    }
+  ]
+}

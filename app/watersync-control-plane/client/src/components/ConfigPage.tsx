@@ -271,6 +271,7 @@ function DiscoveryDialog({
   const [selectedTables, setSelectedTables] = useState<SourceTable[]>([]);
   const [ingestionType, setIngestionType] = useState('incremental');
   const [epicCsa, setEpicCsa] = useState(false);
+  const [epicChangeMethod, setEpicChangeMethod] = useState('csa_table');
   const [autoCdcFromSnapshot, setAutoCdcFromSnapshot] = useState(false);
   const [drafts, setDrafts] = useState<TableDraft[]>([]);
   const [reviewPage, setReviewPage] = useState(0);
@@ -460,6 +461,7 @@ function DiscoveryDialog({
             partitionColumn: draft.partitionColumn === 'none' ? null : draft.partitionColumn,
             predicateColumn: draft.predicateColumn === 'none' ? null : draft.predicateColumn,
             epicCsaEnabled: epicCsa,
+            epicChangeMethod: epicCsa ? epicChangeMethod : 'csa_table',
             autoCdcFromSnapshot,
             jdbcUrl: connectionMode === 'jdbc' || connectionMode === 'uc_secret' ? jdbcUrl : null,
             jdbcUser: connectionMode === 'jdbc' || connectionMode === 'uc_secret' ? jdbcUser : null,
@@ -946,6 +948,20 @@ function DiscoveryDialog({
                     <small>Uses change-sequence tracking instead of a timestamp watermark.</small>
                   </span>
                 </label>
+                {ingestionType === 'incremental' && epicCsa && (
+                  <div className="mode-field space-y-1.5">
+                    <Label htmlFor="discover-epic-change-method">EPIC change source</Label>
+                    <Select value={epicChangeMethod} onValueChange={setEpicChangeMethod}>
+                      <SelectTrigger id="discover-epic-change-method">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="csa_table">CSA tables</SelectItem>
+                        <SelectItem value="stored_procedure">Epic stored procedure</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
                 {ingestionType === 'full' && (
                   <label className="mode-toggle md:col-span-2">
                     <Checkbox
@@ -1158,8 +1174,10 @@ function ConfigDialog({
   const [busy, setBusy] = useState(false);
   const [ingestionType, setIngestionType] = useState(row?.ingestion_type ?? 'incremental');
   const [epicCsa, setEpicCsa] = useState(toBool(row?.epic_csa_enabled));
+  const [epicChangeMethod, setEpicChangeMethod] = useState(row?.epic_change_method ?? 'csa_table');
   useEffect(() => setIngestionType(row?.ingestion_type ?? 'incremental'), [row, open]);
   useEffect(() => setEpicCsa(toBool(row?.epic_csa_enabled)), [row, open]);
+  useEffect(() => setEpicChangeMethod(row?.epic_change_method ?? 'csa_table'), [row, open]);
   const csaMode = ingestionType === 'incremental' && epicCsa;
   const usesWatermark = ingestionType === 'incremental' && !epicCsa;
   const submit = async (e: FormEvent<HTMLFormElement>) => {
@@ -1184,6 +1202,10 @@ function ConfigDialog({
           partitionColumn: f.get('partition') || null,
           predicateColumn: f.get('predicate') || null,
           epicCsaEnabled: csaMode,
+          epicChangeMethod: csaMode ? epicChangeMethod : 'csa_table',
+          epicChangeProcedure: f.get('epic_change_procedure') || null,
+          epicChangeSkipUpdateDate: f.get('epic_change_skip_update_date') === 'on',
+          epicChangeColumnNames: f.get('epic_change_column_names') || null,
           autoCdcFromSnapshot: f.get('auto_cdc_from_snapshot') === 'on',
           jdbcUrl: f.get('jdbc_url') || null,
           jdbcUser: f.get('jdbc_user') || null,
@@ -1277,7 +1299,7 @@ function ConfigDialog({
                   disabled={!usesWatermark}
                   hint={
                     csaMode
-                      ? 'EPIC CSA tracks changes by sequence, so no watermark column is used.'
+                      ? 'EPIC tracks the changes, so no watermark column is used.'
                       : !usesWatermark
                         ? 'Full loads read the whole table, so no watermark column is used.'
                         : undefined
@@ -1297,6 +1319,41 @@ function ConfigDialog({
                   onCheckedChange={setEpicCsa}
                   disabled={ingestionType === 'full'}
                 />
+                {csaMode && (
+                  <div className="space-y-2">
+                    <Label htmlFor="epic_change_method">EPIC change source</Label>
+                    <Select value={epicChangeMethod} onValueChange={setEpicChangeMethod}>
+                      <SelectTrigger id="epic_change_method" className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="csa_table">CSA tables</SelectItem>
+                        <SelectItem value="stored_procedure">Epic stored procedure</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                {csaMode && epicChangeMethod === 'stored_procedure' && (
+                  <>
+                    <Field
+                      name="epic_change_procedure"
+                      label="Stored procedure"
+                      value={row?.epic_change_procedure}
+                      hint="Optional. Defaults to EPIC_UTIL.ESP_CR_ALTERED_ROWS."
+                    />
+                    <Field
+                      name="epic_change_column_names"
+                      label="Changed columns"
+                      value={row?.epic_change_column_names}
+                      hint="Optional. Comma-separated columns; only changes to them are read."
+                    />
+                    <Toggle
+                      name="epic_change_skip_update_date"
+                      label="Skip row update times"
+                      checked={toBool(row?.epic_change_skip_update_date)}
+                    />
+                  </>
+                )}
               </div>
             </TabsContent>
             <TabsContent value="connection" forceMount className="mt-4 data-[state=inactive]:hidden">

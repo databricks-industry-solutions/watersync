@@ -14,6 +14,10 @@
 | `partition_column` | STRING | no | Numeric column for parallel JDBC partitioning |
 | `predicate_column` | STRING | no | String column for predicate-based parallel reads (requires `jdbc_url`) |
 | `epic_csa_enabled` | BOOLEAN | no | Use the EPIC CSA worker (incremental only) |
+| `epic_change_method` | STRING | no | With `epic_csa_enabled`: `csa_table` (default, read the CSA tables) or `stored_procedure` (use Epic's stored procedure) |
+| `epic_change_procedure` | STRING | no | With `stored_procedure`: Epic's stored procedure (default `EPIC_UTIL.ESP_CR_ALTERED_ROWS`) |
+| `epic_change_skip_update_date` | BOOLEAN | no | With `stored_procedure`: don't ask the procedure for each row's update time |
+| `epic_change_column_names` | STRING | no | With `stored_procedure`: comma-separated columns; only changes to them are read |
 | `auto_cdc_from_snapshot` | BOOLEAN | no | For `full` sources, stage each snapshot and maintain SCD Type 2 history in the target |
 | `jdbc_url` | STRING | one of* | JDBC URL to the source (*set `jdbc_url` or `connection_name`; at least one is required) |
 | `jdbc_user` | STRING | no | JDBC username |
@@ -51,6 +55,19 @@ VALUES
    'incremental', 'EVENT_ID', 'UPDATE_DATE', false,
    false, 'clarity_conn', 5, 10000, 8, current_timestamp(), true);
 ```
+
+To load an EPIC table through Epic's stored procedure instead of the CSA tables, pick **Epic stored procedure** as the EPIC change source in the Control Plane app, or set `epic_change_method` on an EPIC CSA row with SQL:
+
+```sql
+UPDATE main.watersync.jdbc_ingestion_config
+SET epic_change_method = 'stored_procedure',
+    update_dttm = current_timestamp()
+WHERE ingestion_group = 'epic' AND source_table_name = 'dbo.PAT_ENC';
+```
+
+With the stored procedure, `source_table_name` must be a plain name (`schema.table` or `database.schema.table`, without brackets or quotes) and `key_columns` comma-separated column names. The ingestion job rejects other values.
+
+On an existing config table, selecting its location in the Control Plane app adds the columns; otherwise run `UnityCatalogSetup.create_config_table()` (or the notebook's `setup_uc` action) first.
 
 ## JDBC Connection Options
 

@@ -111,3 +111,7 @@ Selected when `epic_csa_enabled = true`. Uses EPIC Clarity CSA (Change Sync Admi
 - **Later runs** — read `MAX(_TIMESTAMP_EXTRACT_KEY)`; skip if it has not advanced, otherwise read CSA rows in `(last, max]` `LEFT JOIN`ed to the source table on `key_columns`, and append them to staging with `_IS_DELETED` and `_csa_update_dt` (from `_UPDATE_DT`)
 - Deleted rows keep their keys from the CSA table, so the CDC pipeline can apply them as deletes
 - `key_columns` is required; `watermark_column` is ignored
+
+### `EpicStoredProcedureIngestionWorker`
+
+Another way to load EPIC tables incrementally: instead of reading the CSA tables, it calls Epic's stored procedure for changed rows (`EPIC_UTIL.ESP_CR_ALTERED_ROWS`) and reads the changed rows from the source table. Selected when `epic_csa_enabled = true` and `epic_change_method = 'stored_procedure'`; `key_columns` is required, and `epic_change_procedure` can name a different procedure. Deleted rows are staged with `_IS_DELETED`, as with the CSA worker, so the same CDC pipeline applies the changes.

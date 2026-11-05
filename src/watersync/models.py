@@ -61,6 +61,10 @@ class IngestionConfig:
     partition_column: str
     predicate_column: str
     epic_csa_enabled: bool = False
+    epic_change_method: str = "csa_table"
+    epic_change_procedure: str = ""
+    epic_change_skip_update_date: bool = False
+    epic_change_column_names: str = ""
     auto_cdc_from_snapshot: bool = False
     jdbc_url: str = ""
     jdbc_user: str = ""
@@ -121,5 +125,10 @@ class JobProvisioningSettings:
     cdc_pipeline_id: str = ""
     cdc_pipeline_file_path: str = ""
     use_serverless: bool = True
+    # Notebooks from a Git repository at a branch, tag or commit; an empty git_url means workspace notebook paths.
     git_url: str = ""
     git_branch: str = "main"
+    git_tag: str = ""
+    git_commit: str = ""
+    # Detected from git_url when empty; needed for self-hosted servers (e.g. gitHubEnterprise).
+    git_provider: str = ""

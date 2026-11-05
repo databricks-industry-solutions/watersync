@@ -14,23 +14,26 @@ Typical uses:
 
 There are two ways to run it, with identical behavior:
 
-|                       | Where                                            | Best for                                          |
-| --------------------- | ------------------------------------------------ | ------------------------------------------------- |
+|                       | Where                                                | Best for                                          |
+| --------------------- | ---------------------------------------------------- | ------------------------------------------------- |
 | **Control Plane app** | **Export** / **Import** in the header, on every page | Ad hoc exports, reviewing a file before importing |
-| **Python script**     | `scripts/watersync_config.py`                    | Deployment pipelines and automation               |
+| **Python script**     | `scripts/watersync_config.py`                        | Deployment pipelines and automation               |
 
 The script calls the deployed app, so validation, the config write, and job creation all run the same code.
+
+To import without the app at all, `watersync-import` reads the same file and writes the configs and jobs directly,
+through a SQL warehouse and the Databricks API. See [Bundle Deployment](Bundle-Deployment).
 
 ---
 
 ## What the file contains
 
-| Included                                                                                       | Not included                                                              |
-| ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| Every row of `jdbc_ingestion_config` in the location                                           | Watermarks (`jdbc_ingestion_watermark`): runtime state                    |
-| Each group's job settings: Git source, parallelism, schedule, job compute, SDP compute, run as | Secret **values**: only secret scope/key and UC secret names are exported |
-| The [row check jobs](Row-Checks#row-check-jobs) of the location and of its groups (`rowCheckJobs`): check, group, range start, Git source, parallelism, schedule, job compute, run as | |
-|                                                                                                | Job run history, job IDs and permissions                                  |
+| Included                                                                                                                                                                                            | Not included                                                              |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| Every row of `jdbc_ingestion_config` in the location                                                                                                                                                | Watermarks (`jdbc_ingestion_watermark`): runtime state                    |
+| Each group's job settings: Git source, volume wheel, parallelism, schedule, job compute, SDP compute, run as                                                                                        | Secret **values**: only secret scope/key and UC secret names are exported |
+| The [row check jobs](Row-Checks#row-check-jobs) of the location and of its groups (`rowCheckJobs`): check, group, range start, Git source, volume wheel, parallelism, schedule, job compute, run as |                                                                           |
+|                                                                                                                                                                                                     | Job run history, job IDs and permissions                                  |
 
 Job settings are **read back from the Databricks API** at export time, from the job named
 `[<group>] Ingestion Pipeline` and its CDC pipeline. That means:
@@ -251,6 +254,10 @@ script. A non-zero exit code fails the step.
       "partitionColumn": null,
       "predicateColumn": null,
       "epicCsaEnabled": false,
+      "epicChangeMethod": "csa_table",
+      "epicChangeProcedure": null,
+      "epicChangeSkipUpdateDate": false,
+      "epicChangeColumnNames": null,
       "autoCdcFromSnapshot": false,
       "jdbcUrl": null,
       "jdbcUser": null,
@@ -268,8 +275,14 @@ script. A non-zero exit code fails the step.
   "jobs": [
     {
       "ingestionGroup": "sales",
-      "gitUrl": "https://github.com/databricks-industry-solutions/watersync",
-      "gitBranch": "main",
+      "notebooks": {
+        "source": "GIT",
+        "gitUrl": "https://github.com/databricks-industry-solutions/watersync",
+        "gitProvider": null,
+        "referenceType": "BRANCH",
+        "reference": "main"
+      },
+      "library": { "source": "GIT" },
       "foreachConcurrency": 4,
       "cdcPipelineId": null,
       "schedule": {
@@ -280,7 +293,7 @@ script. A non-zero exit code fails the step.
       },
       "compute": {
         "mode": "SERVERLESS",
-        "performanceTarget": "STANDARD",
+        "performanceTarget": "PERFORMANCE_OPTIMIZED",
         "sparkVersion": "",
         "driverNodeTypeId": "",
         "workerNodeTypeId": "",
@@ -308,63 +321,91 @@ script. A non-zero exit code fails the step.
 empty or omitted, so a file can carry only tables or only job settings. A file holds at most 5,000 configs and
 500 jobs.
 
+### Sample file
+
+[`examples/watersync-config.json`](https://github.com/databricks-industry-solutions/watersync/blob/main/examples/watersync-config.json)
+is a complete file to start from, with every field of every entry. It has four ingestion groups, each set up a
+different way:
+
+| Group               | Tables                                            | Change detection                                       | Connection                | Job                                                      | Notebooks and package                                        |
+| ------------------- | ------------------------------------------------- | ------------------------------------------------------ | ------------------------- | -------------------------------------------------------- | ------------------------------------------------------------ |
+| `clarity_csa`       | `PAT_ENC`, `PATIENT`, `PAT_ENC_DX`                | EPIC CSA tables                                        | UC connection             | Serverless, hourly                                       | GitHub `main`, package from the same branch                  |
+| `clarity_sp`        | `ORDER_PROC`, `HSP_ACCOUNT`, `CLARITY_ADT`        | Epic's stored procedure                                | JDBC URL and UC secret    | Serverless, every 15 minutes, run as a service principal | Azure DevOps `main`, wheel in a volume                       |
+| `clarity_reference` | `CLARITY_DEP`, `CLARITY_SER`                      | Full loads: one overwrite, one with SCD Type 2 history | JDBC URL and secret scope | Job cluster and classic CDC pipeline, nightly            | A bundle's workspace folder, the wheel the bundle deployed   |
+| `finance`           | PostgreSQL `invoices`, `invoice_lines` (disabled) | Timestamp watermark                                    | UC connection             | Serverless, manual runs, run as a user                   | GitHub tag `v0.4.0`, `watersync==0.4.0` from a package index |
+
+It also has three row check jobs: a daily basic check of the whole location, and weekly detailed checks of two
+groups. Before importing it, replace the catalog and schema names, connections, secrets, JDBC URLs, node types,
+the service principal and user, and the wheel path with your own, and delete the groups you don't need. Then
+validate it with `--dry-run`.
+
 ### `configs[]`
 
 Each entry is one row of `jdbc_ingestion_config`. See
 [Configuration Table](Configuration-Table) for the meaning of each column.
 
-| Field                       | Column                        | Type                    | Notes                                                             |
-| --------------------------- | ----------------------------- | ----------------------- | ----------------------------------------------------------------- |
-| `ingestionGroup`            | `ingestion_group`             | string                  | Required. With `sourceTableName`, the key of the row.             |
-| `sourceTableName`           | `source_table_name`           | string                  | Required.                                                         |
-| `stagingTableFqn`           | `staging_table_fqn`           | string \| null          | Required for snapshot CDC.                                        |
-| `targetTableFqn`            | `target_table_fqn`            | string                  | Required, `catalog.schema.table`.                                 |
-| `ingestionType`             | `ingestion_type`              | `incremental` \| `full` |                                                                   |
-| `keyColumns`                | `key_columns`                 | string \| null          | Comma-separated. Required for incremental and snapshot CDC.       |
-| `watermarkColumn`           | `watermark_column`            | string \| null          | Required for incremental unless EPIC CSA. Dropped for full loads. |
-| `partitionColumn`           | `partition_column`            | string \| null          |                                                                   |
-| `predicateColumn`           | `predicate_column`            | string \| null          |                                                                   |
-| `epicCsaEnabled`            | `epic_csa_enabled`            | boolean                 | Incremental only.                                                 |
-| `autoCdcFromSnapshot`       | `auto_cdc_from_snapshot`      | boolean                 | Full only.                                                        |
-| `jdbcUrl`                   | `jdbc_url`                    | string \| null          | Direct JDBC.                                                      |
-| `jdbcUser`                  | `jdbc_user`                   | string \| null          | Direct JDBC.                                                      |
-| `jdbcSecretScope`           | `jdbc_secret_scope`           | string \| null          | Secret scope **name**.                                            |
-| `jdbcSecretKey`             | `jdbc_secret_key`             | string \| null          | Secret key **name**.                                              |
-| `ucSecretName`              | `uc_secret_name`              | string \| null          | UC secret name.                                                   |
-| `connectionName`            | `connection_name`             | string \| null          | UC connection.                                                    |
-| `connectionDatabase`        | `connection_database`         | string \| null          | Kept only together with `connectionName`.                         |
-| `watermarkThresholdMinutes` | `watermark_threshold_minutes` | integer ≥ 0             |                                                                   |
-| `fetchSize`                 | `fetch_size`                  | integer > 0             |                                                                   |
-| `numPartitions`             | `num_partitions`              | integer > 0             |                                                                   |
-| `enabled`                   | `enabled`                     | boolean                 |                                                                   |
+| Field                       | Column                         | Type                              | Notes                                                             |
+| --------------------------- | ------------------------------ | --------------------------------- | ----------------------------------------------------------------- |
+| `ingestionGroup`            | `ingestion_group`              | string                            | Required. With `sourceTableName`, the key of the row.             |
+| `sourceTableName`           | `source_table_name`            | string                            | Required.                                                         |
+| `stagingTableFqn`           | `staging_table_fqn`            | string \| null                    | Required for snapshot CDC.                                        |
+| `targetTableFqn`            | `target_table_fqn`             | string                            | Required, `catalog.schema.table`.                                 |
+| `ingestionType`             | `ingestion_type`               | `incremental` \| `full`           |                                                                   |
+| `keyColumns`                | `key_columns`                  | string \| null                    | Comma-separated. Required for incremental and snapshot CDC.       |
+| `watermarkColumn`           | `watermark_column`             | string \| null                    | Required for incremental unless EPIC CSA. Dropped for full loads. |
+| `partitionColumn`           | `partition_column`             | string \| null                    |                                                                   |
+| `predicateColumn`           | `predicate_column`             | string \| null                    |                                                                   |
+| `epicCsaEnabled`            | `epic_csa_enabled`             | boolean                           | Incremental only.                                                 |
+| `epicChangeMethod`          | `epic_change_method`           | `csa_table` \| `stored_procedure` | Default `csa_table`. `stored_procedure` needs EPIC CSA.           |
+| `epicChangeProcedure`       | `epic_change_procedure`        | string \| null                    | With `stored_procedure`. Null uses Epic's default procedure.      |
+| `epicChangeSkipUpdateDate`  | `epic_change_skip_update_date` | boolean                           | With `stored_procedure`. Default `false`.                         |
+| `epicChangeColumnNames`     | `epic_change_column_names`     | string \| null                    | With `stored_procedure`. Comma-separated.                         |
+| `autoCdcFromSnapshot`       | `auto_cdc_from_snapshot`       | boolean                           | Full only.                                                        |
+| `jdbcUrl`                   | `jdbc_url`                     | string \| null                    | Direct JDBC.                                                      |
+| `jdbcUser`                  | `jdbc_user`                    | string \| null                    | Direct JDBC.                                                      |
+| `jdbcSecretScope`           | `jdbc_secret_scope`            | string \| null                    | Secret scope **name**.                                            |
+| `jdbcSecretKey`             | `jdbc_secret_key`              | string \| null                    | Secret key **name**.                                              |
+| `ucSecretName`              | `uc_secret_name`               | string \| null                    | UC secret name.                                                   |
+| `connectionName`            | `connection_name`              | string \| null                    | UC connection.                                                    |
+| `connectionDatabase`        | `connection_database`          | string \| null                    | Kept only together with `connectionName`.                         |
+| `watermarkThresholdMinutes` | `watermark_threshold_minutes`  | integer ≥ 0                       |                                                                   |
+| `fetchSize`                 | `fetch_size`                   | integer > 0                       |                                                                   |
+| `numPartitions`             | `num_partitions`               | integer > 0                       |                                                                   |
+| `enabled`                   | `enabled`                      | boolean                           |                                                                   |
 
 ### `jobs[]`
 
 Each entry holds the settings of one group's job, matching the fields of the **Jobs** page's dialog.
 
-| Field                                                          | Type                                                        | Notes                                                                                 |
-| -------------------------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `ingestionGroup`                                               | string                                                      | Required; one entry per group.                                                        |
-| `gitUrl`                                                       | URL                                                         | Required; must be a `github.com` repository.                                          |
-| `gitBranch`                                                    | string                                                      | Required; no whitespace, quotes or backslashes.                                       |
-| `foreachConcurrency`                                           | integer 1–100                                               | Tables ingested in parallel.                                                          |
-| `cdcPipelineId`                                                | string \| null                                              | `null` lets WaterSync provision the group's CDC pipeline; an ID reuses that pipeline. |
-| `schedule.enabled`                                             | boolean                                                     | `false` means the job runs only when triggered.                                       |
-| `schedule.quartzCronExpression`                                | string                                                      | Quartz cron, at least 6 fields.                                                       |
-| `schedule.timezoneId`                                          | string                                                      | For example `UTC` or `Europe/Rome`.                                                   |
-| `schedule.pauseStatus`                                         | `PAUSED` \| `UNPAUSED`                                      |                                                                                       |
-| `compute.mode`                                                 | `SERVERLESS` \| `JOB_CLUSTER`                               |                                                                                       |
-| `compute.performanceTarget`                                    | `STANDARD` \| `PERFORMANCE_OPTIMIZED`                       | Serverless performance mode, shared by the job's serverless tasks.                    |
-| `compute.sparkVersion`, `driverNodeTypeId`, `workerNodeTypeId` | string                                                      | Required for `JOB_CLUSTER`. Node types are cloud-specific.                            |
-| `compute.minWorkers`, `maxWorkers`                             | integer                                                     | Autoscaling range; `maxWorkers` ≥ `minWorkers`.                                       |
-| `pipelineCompute`                                              | object                                                      | Optional; defaults to serverless.                                                     |
-| `pipelineCompute.mode`                                         | `SERVERLESS` \| `CLASSIC`                                   |                                                                                       |
-| `pipelineCompute.nodeTypeId`, `driverNodeTypeId`               | string                                                      | Required for `CLASSIC`.                                                               |
-| `pipelineCompute.minWorkers`, `maxWorkers`, `photon`           | integer, integer, boolean                                   | Classic only.                                                                         |
-| `runAs`                                                        | object                                                      | Optional; defaults to the owner for both.                                             |
-| `runAs.job.mode`                                               | `DEFAULT` \| `USER` \| `SERVICE_PRINCIPAL`                  | `DEFAULT` runs as the owner, the app service principal.                               |
-| `runAs.pipeline.mode`                                          | `SAME_AS_JOB` \| `DEFAULT` \| `USER` \| `SERVICE_PRINCIPAL` | Ignored when `cdcPipelineId` is set.                                                  |
-| `runAs.*.principal`                                            | string                                                      | User email for `USER`, application ID for `SERVICE_PRINCIPAL`.                        |
+| Field                                                          | Type                                                        | Notes                                                                                                                                                                                                |
+| -------------------------------------------------------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ingestionGroup`                                               | string                                                      | Required; one entry per group.                                                                                                                                                                       |
+| `notebooks.source`                                             | `GIT` \| `WORKSPACE`                                        | Where the notebooks come from. Files with the older flat `gitUrl` and `gitBranch` fields still import, as a branch.                                                                                  |
+| `notebooks.gitUrl`                                             | URL                                                         | `GIT`. An `http(s)` URL without whitespace, quotes, backslashes or `$`. A user name in the URL is dropped.                                                                                           |
+| `notebooks.gitProvider`                                        | string \| null                                              | `GIT`. `null` detects it for github.com, dev.azure.com, gitlab.com, bitbucket.org and AWS CodeCommit; a self-hosted server needs `gitHubEnterprise`, `gitLabEnterpriseEdition` or `bitbucketServer`. |
+| `notebooks.referenceType`, `reference`                         | `BRANCH` \| `TAG` \| `COMMIT`, string                       | `GIT`. No whitespace, quotes or backslashes; a commit is its hash.                                                                                                                                   |
+| `notebooks.basePath`                                           | string                                                      | `WORKSPACE`. The folder that holds `notebooks/` and `src/`.                                                                                                                                          |
+| `library.source`                                               | `GIT` \| `WHEEL` \| `PIP`                                   | Where tasks install WaterSync from. `GIT` needs `GIT` notebooks and a public repository. Older files' `libraryPath` imports as `WHEEL`.                                                              |
+| `library.path`                                                 | string                                                      | `WHEEL`. A `.whl` file under `/Volumes/<catalog>/<schema>/<volume>/` or `/Workspace/`.                                                                                                               |
+| `library.requirement`                                          | string                                                      | `PIP`. One pip requirement, such as `watersync==0.4.0` or a wheel URL: no spaces, quotes, backslashes or `$`, and no pip options (nothing starting with `-`).                                        |
+| `foreachConcurrency`                                           | integer 1–100                                               | Tables ingested in parallel.                                                                                                                                                                         |
+| `cdcPipelineId`                                                | string \| null                                              | `null` lets WaterSync provision the group's CDC pipeline; an ID reuses that pipeline.                                                                                                                |
+| `schedule.enabled`                                             | boolean                                                     | `false` means the job runs only when triggered.                                                                                                                                                      |
+| `schedule.quartzCronExpression`                                | string                                                      | Quartz cron, at least 6 fields.                                                                                                                                                                      |
+| `schedule.timezoneId`                                          | string                                                      | For example `UTC` or `Europe/Rome`.                                                                                                                                                                  |
+| `schedule.pauseStatus`                                         | `PAUSED` \| `UNPAUSED`                                      |                                                                                                                                                                                                      |
+| `compute.mode`                                                 | `SERVERLESS` \| `JOB_CLUSTER`                               |                                                                                                                                                                                                      |
+| `compute.performanceTarget`                                    | `STANDARD` \| `PERFORMANCE_OPTIMIZED`                       | Serverless performance mode, shared by the job's serverless tasks. Defaults to `PERFORMANCE_OPTIMIZED`; `STANDARD` costs less but each task can wait minutes for compute.                            |
+| `compute.sparkVersion`, `driverNodeTypeId`, `workerNodeTypeId` | string                                                      | Required for `JOB_CLUSTER`. Node types are cloud-specific.                                                                                                                                           |
+| `compute.minWorkers`, `maxWorkers`                             | integer                                                     | Autoscaling range; `maxWorkers` ≥ `minWorkers`.                                                                                                                                                      |
+| `pipelineCompute`                                              | object                                                      | Optional; defaults to serverless.                                                                                                                                                                    |
+| `pipelineCompute.mode`                                         | `SERVERLESS` \| `CLASSIC`                                   |                                                                                                                                                                                                      |
+| `pipelineCompute.nodeTypeId`, `driverNodeTypeId`               | string                                                      | Required for `CLASSIC`.                                                                                                                                                                              |
+| `pipelineCompute.minWorkers`, `maxWorkers`, `photon`           | integer, integer, boolean                                   | Classic only.                                                                                                                                                                                        |
+| `runAs`                                                        | object                                                      | Optional; defaults to the owner for both.                                                                                                                                                            |
+| `runAs.job.mode`                                               | `DEFAULT` \| `USER` \| `SERVICE_PRINCIPAL`                  | `DEFAULT` runs as the owner, the app service principal.                                                                                                                                              |
+| `runAs.pipeline.mode`                                          | `SAME_AS_JOB` \| `DEFAULT` \| `USER` \| `SERVICE_PRINCIPAL` | Ignored when `cdcPipelineId` is set.                                                                                                                                                                 |
+| `runAs.*.principal`                                            | string                                                      | User email for `USER`, application ID for `SERVICE_PRINCIPAL`.                                                                                                                                       |
 
 ### Validation
 

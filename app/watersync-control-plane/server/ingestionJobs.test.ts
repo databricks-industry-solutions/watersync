@@ -73,6 +73,7 @@ vi.mock('./sql.js', () => ({
 }));
 
 const { saveJob, readJobSettings } = await import('./ingestionJobs.js');
+const { gitProviderOf } = await import('./gitSource.js');
 
 const payload = (overrides: Record<string, unknown> = {}) =>
   jobPayloadSchema.parse({
@@ -100,6 +101,31 @@ const payload = (overrides: Record<string, unknown> = {}) =>
     },
     ...overrides,
   });
+const wheel = '/Volumes/main/watersync/libs/watersync-0.4.0-py3-none-any.whl';
+const github = {
+  source: 'GIT',
+  gitUrl: 'https://github.com/databricks-industry-solutions/watersync',
+  referenceType: 'BRANCH',
+  reference: 'main',
+};
+const jobCluster = {
+  mode: 'JOB_CLUSTER',
+  performanceTarget: 'PERFORMANCE_OPTIMIZED',
+  sparkVersion: '18.x-scala2.13',
+  driverNodeTypeId: 'i3.xlarge',
+  workerNodeTypeId: 'i3.xlarge',
+  minWorkers: 1,
+  maxWorkers: 2,
+};
+// The job saveJob wrote, when it wrote exactly one.
+const onlyJob = () => {
+  const saved = [...state.jobs.values()];
+  expect(saved).toHaveLength(1);
+  return saved[0];
+};
+// The paths of the payload's validation issues.
+const issues = (overrides: Record<string, unknown>) =>
+  jobPayloadSchema.safeParse({ ...payload(), ...overrides }).error?.issues.map((issue) => issue.path.join('.'));
 const roundTrip = async (body: ReturnType<typeof payload>) => {
   await saveJob(body);
   const { catalog: _catalog, schema: _schema, ...settings } = body;
@@ -122,7 +148,7 @@ describe('readJobSettings', () => {
         schedule: { enabled: true, quartzCronExpression: '0 30 2 * * ?', timezoneId: 'UTC', pauseStatus: 'PAUSED' },
         compute: {
           mode: 'JOB_CLUSTER',
-          performanceTarget: 'STANDARD',
+          performanceTarget: 'PERFORMANCE_OPTIMIZED',
           sparkVersion: '18.x-scala2.13',
           driverNodeTypeId: 'i3.2xlarge',
           workerNodeTypeId: 'i3.xlarge',
@@ -143,6 +169,152 @@ describe('readJobSettings', () => {
         },
       })
     );
+  });
+
+  it('maps the flat Git fields of older export files to a branch, installed from the repository', async () => {
+    const body = payload();
+    expect(body.notebooks).toEqual({
+      source: 'GIT',
+      gitUrl: 'https://github.com/databricks-industry-solutions/watersync',
+      gitProvider: null,
+      referenceType: 'BRANCH',
+      reference: 'feature/x',
+    });
+    expect(body.library).toEqual({ source: 'GIT' });
+    expect(payload({ libraryPath: wheel }).library).toEqual({ source: 'WHEEL', path: wheel });
+    await saveJob(body);
+    expect(onlyJob().environments?.[0]?.spec?.dependencies).toEqual([
+      'watersync@git+https://github.com/databricks-industry-solutions/watersync.git@feature/x',
+    ]);
+  });
+
+  it('installs and reads back a wheel on serverless and job cluster compute, and in the pipeline', async () => {
+    await roundTrip(payload({ library: { source: 'WHEEL', path: wheel } }));
+    expect(onlyJob().environments?.[0]?.spec?.dependencies).toEqual([wheel]);
+    expect(state.pipeline?.environment?.dependencies).toEqual([wheel]);
+
+    state.jobs.clear();
+    const workspaceWheel =
+      '/Workspace/Users/me/.bundle/watersync/dev/artifacts/.internal/watersync-0.4.0-py3-none-any.whl';
+    await roundTrip(payload({ library: { source: 'WHEEL', path: workspaceWheel }, compute: jobCluster }));
+    expect(onlyJob().tasks?.[0]?.libraries).toEqual([{ whl: workspaceWheel }]);
+  });
+
+  it('runs notebooks from a workspace folder and installs a pip requirement', async () => {
+    const body = payload({
+      notebooks: { source: 'WORKSPACE', basePath: '/Workspace/Users/me/watersync/' },
+      library: { source: 'PIP', requirement: 'watersync==0.4.0' },
+    });
+    expect(body.notebooks).toEqual({ source: 'WORKSPACE', basePath: '/Workspace/Users/me/watersync' });
+    await roundTrip(body);
+    const job = onlyJob();
+    expect(job.git_source).toBeUndefined();
+    expect(job.tasks?.map((task) => task.notebook_task ?? task.for_each_task?.task.notebook_task)).toMatchObject([
+      { notebook_path: '/Workspace/Users/me/watersync/notebooks/Task - Plan Configs', source: 'WORKSPACE' },
+      { notebook_path: '/Workspace/Users/me/watersync/notebooks/Task - Run Ingestion', source: 'WORKSPACE' },
+      undefined,
+      {
+        notebook_path: '/Workspace/Users/me/watersync/src/watersync/utils/selective_pipeline_refresh',
+        source: 'WORKSPACE',
+      },
+      undefined,
+    ]);
+    expect(job.environments?.[0]?.spec?.dependencies).toEqual(['watersync==0.4.0']);
+
+    state.jobs.clear();
+    await roundTrip(payload({ ...body, compute: jobCluster }));
+    expect(onlyJob().tasks?.[0]?.libraries).toEqual([{ pypi: { package: 'watersync==0.4.0' } }]);
+  });
+
+  it('pins the notebooks and the package to a tag or a commit', async () => {
+    await roundTrip(payload({ notebooks: { ...github, referenceType: 'TAG', reference: 'v0.4.0' } }));
+    expect(onlyJob().git_source).toEqual({ git_url: github.gitUrl, git_provider: 'gitHub', git_tag: 'v0.4.0' });
+    expect(onlyJob().environments?.[0]?.spec?.dependencies).toEqual([`watersync@git+${github.gitUrl}.git@v0.4.0`]);
+
+    state.jobs.clear();
+    const commit = 'bf24af596167de4e05f65b13d5e6e7a8657f875a';
+    await roundTrip(payload({ notebooks: { ...github, referenceType: 'COMMIT', reference: commit } }));
+    expect(onlyJob().git_source).toMatchObject({ git_commit: commit });
+    expect(issues({ notebooks: { ...github, referenceType: 'COMMIT', reference: 'main' } })).toEqual([
+      'notebooks.reference',
+    ]);
+  });
+
+  it('runs the notebooks from Azure DevOps without the user name in the URL', async () => {
+    const body = payload({
+      // A clone URL as Azure DevOps shows it: the organization as the user name, spaces encoded in the project.
+      notebooks: { ...github, gitUrl: 'https://UKHS@dev.azure.com/UKHS/Data%20Management/_git/watersync' },
+    });
+    expect(body.notebooks).toMatchObject({ gitUrl: 'https://dev.azure.com/UKHS/Data%20Management/_git/watersync' });
+    await roundTrip(body);
+    expect(onlyJob().git_source).toEqual({
+      git_url: 'https://dev.azure.com/UKHS/Data%20Management/_git/watersync',
+      git_provider: 'azureDevOpsServices',
+      git_branch: 'main',
+    });
+    // Azure DevOps URLs take no .git suffix.
+    expect(onlyJob().environments?.[0]?.spec?.dependencies).toEqual([
+      'watersync@git+https://dev.azure.com/UKHS/Data%20Management/_git/watersync@main',
+    ]);
+  });
+
+  it('asks for the provider of a self-hosted Git server', async () => {
+    const enterprise = { ...github, gitUrl: 'https://git.example.org/data/watersync' };
+    expect(issues({ notebooks: enterprise })).toEqual(['notebooks.gitProvider']);
+    await roundTrip(payload({ notebooks: { ...enterprise, gitProvider: 'gitHubEnterprise' } }));
+    expect(onlyJob().git_source).toMatchObject({ git_provider: 'gitHubEnterprise' });
+    expect(onlyJob().environments?.[0]?.spec?.dependencies).toEqual([
+      'watersync@git+https://git.example.org/data/watersync.git@main',
+    ]);
+  });
+
+  it('rejects a library source that does not fit the notebooks, and paths it cannot install', () => {
+    expect(
+      issues({ notebooks: { source: 'WORKSPACE', basePath: '/Workspace/x' }, library: { source: 'GIT' } })
+    ).toEqual(['library.source']);
+    for (const path of [
+      '/Workspace/Users/me/watersync.tar.gz',
+      '/Volumes/main/watersync/watersync.whl',
+      '/Volumes/main/watersync/libs/my "wheel".whl',
+      'dbfs:/Volumes/main/watersync/libs/watersync.whl',
+    ]) {
+      expect(issues({ library: { source: 'WHEEL', path } }), path).toEqual(['library.path']);
+    }
+    for (const requirement of [
+      'watersync"; rm -rf /',
+      'watersync --extra-index-url https://example.org/simple',
+      '--index-url=https://example.org/simple',
+      '-r https://example.org/requirements.txt',
+    ]) {
+      expect(issues({ library: { source: 'PIP', requirement } }), requirement).toEqual(['library.requirement']);
+    }
+    expect(issues({ library: { source: 'PIP', requirement: 'watersync==0.4.0' } })).toBeUndefined();
+  });
+
+  it('rejects Git URLs that could break out of a requirement or a %pip line', () => {
+    for (const gitUrl of [
+      "https://github.com/org/watersync\nimport os; os.system('id')\n#",
+      'https://github.com/org/watersync"; import os #',
+      'https://github.com/org/water`sync`',
+      'ssh://git@github.com/org/watersync',
+      'file:///tmp/watersync',
+    ]) {
+      expect(issues({ notebooks: { ...github, gitUrl } }), gitUrl).toContain('notebooks.gitUrl');
+    }
+  });
+
+  it('detects the provider of the Git hosts it knows', () => {
+    for (const [gitUrl, provider] of [
+      ['https://github.com/org/watersync', 'gitHub'],
+      ['https://dev.azure.com/org/project/_git/watersync', 'azureDevOpsServices'],
+      ['https://org.visualstudio.com/project/_git/watersync', 'azureDevOpsServices'],
+      ['https://gitlab.com/org/watersync', 'gitLab'],
+      ['https://bitbucket.org/org/watersync', 'bitbucketCloud'],
+      ['https://git-codecommit.us-east-1.amazonaws.com/v1/repos/watersync', 'awsCodeCommit'],
+    ]) {
+      expect(gitProviderOf(gitUrl), gitUrl).toBe(provider);
+    }
+    expect(gitProviderOf('https://git.example.org/org/watersync')).toBeUndefined();
   });
 
   it('keeps a pipeline supplied by ID', async () => {

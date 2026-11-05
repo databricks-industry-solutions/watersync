@@ -414,8 +414,10 @@ class RowCheckRunner:
         """
         The rows a ranged check compares: the source WHERE clause, the target rows, and what was checked.
         A time range on an EPIC CSA table checks the keys its CSA change table lists as changed in the range.
+        Tables loaded through Epic's stored procedure don't read the CSA tables, so they use the plain range.
         """
-        if config.epic_csa_enabled and not self.range_column and self.range_is_time:
+        reads_csa = config.epic_csa_enabled and config.epic_change_method == "csa_table"
+        if reads_csa and not self.range_column and self.range_is_time:
             changes = CsaChanges.parse(
                 config.source_table_name,
                 epic_csa_table_name(config.source_table_name),

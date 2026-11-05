@@ -65,7 +65,8 @@ import { displayTime, formString, fqn, relativeTime } from '../utils';
 import { useControl } from '../lib/control';
 import { PageTitle, ErrorState, ScheduleFields, Toggle } from './shared';
 import { RowCheckDailyChart } from './RowCheckDailyChart';
-import { JobComputeFields, NodeTypeOptions, RunAsFields } from './JobFields';
+import { JobComputeFields, NodeTypeOptions, RunAsFields, SourceFields } from './JobFields';
+import { sourceFromForm } from '../lib/jobSource';
 import { computeFromForm, useNodeTypes } from '../lib/jobCompute';
 import type { ComputeMode, PerformanceTarget } from '../lib/jobCompute';
 import { FilterBar } from './FilterBar';
@@ -1274,7 +1275,7 @@ function RowCheckJobForm({
   const [scheduleActive, setScheduleActive] = useState(job?.schedule.pauseStatus !== 'PAUSED');
   const [computeMode, setComputeMode] = useState<ComputeMode>(job?.compute.mode ?? 'SERVERLESS');
   const [performanceTarget, setPerformanceTarget] = useState<PerformanceTarget>(
-    job?.compute.performanceTarget ?? 'STANDARD'
+    job?.compute.performanceTarget ?? 'PERFORMANCE_OPTIMIZED'
   );
   const [runAsMode, setRunAsMode] = useState<string>(job?.runAs.mode ?? 'DEFAULT');
   const nodeTypes = useNodeTypes(computeMode === 'JOB_CLUSTER');
@@ -1315,8 +1316,7 @@ function RowCheckJobForm({
           ingestionGroup,
           checkMode,
           rangeFrom: checkMode === 'detailed' ? rangeFrom.trim() : '',
-          gitUrl: form.get('gitUrl'),
-          gitBranch: form.get('gitBranch'),
+          ...sourceFromForm(form),
           maxParallelTables: Number(form.get('maxParallelTables')),
           schedule: {
             enabled: scheduleEnabled,
@@ -1342,7 +1342,7 @@ function RowCheckJobForm({
       <Tabs value={tab} onValueChange={setTab} className="w-full">
         <TabsList className="flex h-auto w-full [&>button]:flex-auto [&>button]:px-3">
           <TabsTrigger value="check">Check</TabsTrigger>
-          <TabsTrigger value="source">Git source &amp; execution</TabsTrigger>
+          <TabsTrigger value="source">Source &amp; execution</TabsTrigger>
           <TabsTrigger value="compute">Job Compute</TabsTrigger>
           <TabsTrigger value="schedule">Schedule</TabsTrigger>
           <TabsTrigger value="run-as">Run as</TabsTrigger>
@@ -1440,20 +1440,7 @@ function RowCheckJobForm({
         </TabsContent>
         <TabsContent value="source" data-tab="source" forceMount className="mt-4 data-[state=inactive]:hidden">
           <div className="grid gap-4 md:grid-cols-2">
-            <div className="space-y-2 md:col-span-2">
-              <Label htmlFor="row-check-git-url">GitHub repository</Label>
-              <Input
-                id="row-check-git-url"
-                name="gitUrl"
-                type="url"
-                required
-                defaultValue={job?.gitUrl || 'https://github.com/databricks-industry-solutions/watersync'}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="row-check-git-branch">Branch</Label>
-              <Input id="row-check-git-branch" name="gitBranch" required defaultValue={job?.gitBranch ?? 'main'} />
-            </div>
+            <SourceFields id="row-check-source" defaultNotebooks={job?.notebooks} defaultLibrary={job?.library} />
             <div className="space-y-2">
               <Label htmlFor="row-check-parallel">Tables checked in parallel</Label>
               <Input

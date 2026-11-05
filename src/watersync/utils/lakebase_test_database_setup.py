@@ -204,7 +204,7 @@ class LakebaseTestDatabaseSetup:
         return f"{self.csa_schema}.csa_{base_table.split('.')[-1].lower()}"
 
     def _csa_trigger_function_sql(self) -> str:
-        """PL/pgSQL trigger that writes one CSA event row per DML statement."""
+        """PL/pgSQL trigger that writes one CSA event row per affected row."""
         return f"""
             CREATE OR REPLACE FUNCTION {self.csa_schema}.record_csa_change() RETURNS trigger
             LANGUAGE plpgsql AS $csa$
@@ -247,6 +247,98 @@ class LakebaseTestDatabaseSetup:
             $csa$
         """
 
+    def _csa_altered_rows_procedure_sql(self) -> str:
+        """Postgres mock of Epic's EPIC_UTIL.ESP_CR_ALTERED_ROWS, with the parameters Epic documents.
+
+        Like Epic's, it leaves the changed keys and CR_UPD_DATE for [i_startdate, i_enddate) in
+        epic_util.cdc_<table>, replacing what the table held. It reads epic_util.csa_<table>;
+        i_reportdb, i_includesource, i_includelinenum, i_columnnames, i_skipupdatedate and
+        i_includevaluelinecolumn are accepted but ignored.
+        """
+        return f"""
+            DROP PROCEDURE IF EXISTS {self.csa_schema}.esp_cr_altered_rows(
+                text, timestamp, timestamp, text, int, int, int, text, text, int, int);
+            DROP FUNCTION IF EXISTS {self.csa_schema}.esp_cr_altered_rows_select(text, timestamp, timestamp, int);
+            CREATE OR REPLACE PROCEDURE {self.csa_schema}.esp_cr_altered_rows(
+                i_tablename text,
+                i_reportdb text,
+                i_startdate timestamp,
+                i_enddate timestamp,
+                i_noduplicates int DEFAULT 0,
+                i_includesource int DEFAULT 0,
+                i_includelinenum int DEFAULT 0,
+                i_columnnames text DEFAULT '',
+                i_skipupdatedate int DEFAULT 0,
+                i_includevaluelinecolumn int DEFAULT 0
+            )
+            LANGUAGE plpgsql AS $esp$
+            DECLARE
+                base      text := lower(split_part(i_tablename, '.', -1));
+                csa_table text := 'csa_' || base;
+                cdc_table text := 'cdc_' || base;
+                key_list  text;
+                key_defs  text;
+            BEGIN
+                SELECT string_agg(quote_ident(column_name), ', ' ORDER BY ordinal_position),
+                       string_agg(quote_ident(column_name) || ' ' || data_type, ', ' ORDER BY ordinal_position)
+                INTO key_list, key_defs
+                FROM information_schema.columns
+                WHERE table_schema = '{self.csa_schema}'
+                  AND table_name = csa_table
+                  AND column_name NOT IN ('csa_event_id', '_is_deleted', '_update_dt', '_timestamp_extract_key');
+                IF key_list IS NULL THEN
+                    RAISE EXCEPTION 'No CSA table {self.csa_schema}.% for %', csa_table, i_tablename;
+                END IF;
+
+                EXECUTE format('CREATE TABLE IF NOT EXISTS {self.csa_schema}.%I (%s, cr_upd_date timestamp)',
+                               cdc_table, key_defs);
+                EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON {self.csa_schema}.%I (%s)',
+                               cdc_table || '_keys', cdc_table, key_list);
+                EXECUTE format('DELETE FROM {self.csa_schema}.%I', cdc_table);
+                EXECUTE format(
+                    'INSERT INTO {self.csa_schema}.%I (%s, cr_upd_date) SELECT %s%s, _update_dt '
+                    'FROM {self.csa_schema}.%I WHERE _update_dt >= %L AND _update_dt < %L%s',
+                    cdc_table,
+                    key_list,
+                    CASE WHEN i_noduplicates = 1 THEN 'DISTINCT ON (' || key_list || ') ' ELSE '' END,
+                    key_list,
+                    csa_table,
+                    i_startdate,
+                    i_enddate,
+                    CASE WHEN i_noduplicates = 1
+                        THEN ' ORDER BY ' || key_list || ', _update_dt DESC, _timestamp_extract_key DESC'
+                        ELSE '' END
+                );
+            END;
+            $esp$
+        """
+
+    def _csa_altered_rows_run_function_sql(self) -> str:
+        """Calls esp_cr_altered_rows for [i_startdate, server clock - threshold) and returns that window end.
+
+        The Postgres JDBC driver can't return a SELECT that follows a CALL in one statement,
+        so EpicStoredProcedureIngestionWorker runs the mock through this function.
+        """
+        return f"""
+            CREATE OR REPLACE FUNCTION {self.csa_schema}.esp_cr_altered_rows_run(
+                i_tablename text,
+                i_reportdb text,
+                i_startdate timestamp,
+                i_threshold_minutes int,
+                i_includelinenum int
+            ) RETURNS text
+            LANGUAGE plpgsql AS $esp$
+            DECLARE
+                window_end timestamp := GREATEST(
+                    date_trunc('second', LOCALTIMESTAMP - make_interval(mins => i_threshold_minutes)), i_startdate);
+            BEGIN
+                CALL {self.csa_schema}.esp_cr_altered_rows(
+                    i_tablename, i_reportdb, i_startdate, window_end, 1, 0, i_includelinenum);
+                RETURN to_char(window_end, 'YYYY-MM-DD HH24:MI:SS');
+            END;
+            $esp$
+        """
+
     def create_epic_csa_tables(self) -> None:
         """Create epic_util.csa_<table> shadow tables plus the triggers that fill them.
 
@@ -260,6 +352,8 @@ class LakebaseTestDatabaseSetup:
             with conn.cursor() as cur:
                 cur.execute(f"CREATE SCHEMA IF NOT EXISTS {self.csa_schema}")
                 cur.execute(self._csa_trigger_function_sql())
+                cur.execute(self._csa_altered_rows_procedure_sql())
+                cur.execute(self._csa_altered_rows_run_function_sql())
                 for base_table, key_columns in self.EPIC_CSA_KEY_COLUMNS.items():
                     csa_table = self.csa_table_name(base_table)
                     key_ddl = ", ".join(f"{name} {dtype} NOT NULL" for name, dtype in key_columns.items())
@@ -337,15 +431,21 @@ class LakebaseTestDatabaseSetup:
                     )
         return status
 
-    def epic_csa_config_rows(self) -> list[dict[str, str]]:
-        """Ingestion-config rows for CSA-driven incremental ingestion of the test tables."""
+    def epic_csa_config_rows(self, epic_change_method: str = "csa_table") -> list[dict[str, str]]:
+        """Ingestion-config rows for CSA-driven incremental ingestion of the test tables.
+
+        epic_change_method="stored_procedure" reads through the esp_cr_altered_rows mock instead.
+        """
         settings = self.jdbc_settings()
+        procedure = f"{self.csa_schema}.esp_cr_altered_rows" if epic_change_method == "stored_procedure" else ""
         return [
             {
                 "source_table_name": f"dbo.{base_table}",
                 "csa_table_name": self.csa_table_name(base_table),
                 "ingestion_type": "incremental",
                 "epic_csa_enabled": "true",
+                "epic_change_method": epic_change_method,
+                "epic_change_procedure": procedure,
                 "key_columns": ",".join(key_columns),
                 "watermark_column": "",
                 "partition_column": next(iter(key_columns)),

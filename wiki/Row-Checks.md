@@ -151,7 +151,7 @@ A job runs `notebooks/Task - Row Check` from your Git repository and installs th
 | Tab | Settings |
 | --- | --- |
 | **Check** | Which tables (every group, or one group) and which check (basic or detailed). A detailed check can be limited to rows from a [range](#checking-a-range) start such as `-30d`. Both are fixed once the job exists, because they name it |
-| **Git source & execution** | GitHub repository and branch, and how many tables are checked at the same time |
+| **Source & execution** | Where the notebook comes from and where WaterSync is installed from, as for [ingestion jobs](Control-Plane-App#notebooks-and-package), and how many tables are checked at the same time |
 | **Job Compute** | **Serverless** (default) with a performance mode, or a **shared autoscaling job cluster** (Databricks Runtime, driver and worker node types, min/max workers) for workspaces without serverless jobs |
 | **Schedule** | Quartz cron expression, time zone, active or paused; or manual runs only |
 | **Run as** | The job's owner (the app service principal, default), a user, or a service principal |

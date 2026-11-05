@@ -1,5 +1,6 @@
 import type { jobs } from '@databricks/sdk-experimental';
 import type { JobCompute } from './schemas.js';
+import { isWheelFile } from './jobSource.js';
 import { workspace } from './sql.js';
 
 // Shared by the ingestion jobs and the row check job, so both offer and read back the same compute and identity.
@@ -22,7 +23,10 @@ export function jobCompute(compute: JobCompute, dependency: string) {
     };
   }
   return {
-    task: { job_cluster_key: jobClusterKey, libraries: [{ pypi: { package: dependency } }] },
+    task: {
+      job_cluster_key: jobClusterKey,
+      libraries: [isWheelFile(dependency) ? { whl: dependency } : { pypi: { package: dependency } }],
+    },
     settings: {
       job_clusters: [
         {
@@ -39,10 +43,18 @@ export function jobCompute(compute: JobCompute, dependency: string) {
   };
 }
 
+/** The requirement a job's tasks install WaterSync with: its environment dependency, or a task library. */
+export function readRequirement(settings: jobs.JobSettings | undefined): string | undefined {
+  const environment = settings?.environments?.find((item) => item.environment_key === environmentKey);
+  const library = settings?.tasks?.find((task) => task.libraries?.length)?.libraries?.[0];
+  return environment?.spec?.dependencies?.[0] ?? library?.whl ?? library?.pypi?.package;
+}
+
 /** The compute a job was generated with, read back from its settings. */
 export function readJobCompute(settings: jobs.JobSettings | undefined): JobCompute {
   const cluster = settings?.job_clusters?.find((item) => item.job_cluster_key === jobClusterKey)?.new_cluster;
-  const performanceTarget = settings?.performance_target ?? 'STANDARD';
+  // Jobs without a performance target run performance optimized.
+  const performanceTarget = settings?.performance_target ?? 'PERFORMANCE_OPTIMIZED';
   return cluster
     ? {
         mode: 'JOB_CLUSTER',

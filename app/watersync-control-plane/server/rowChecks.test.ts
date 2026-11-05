@@ -150,7 +150,7 @@ describe('row check jobs', () => {
     ]);
     expect(listedJobs[1]).toMatchObject({
       jobId: 10,
-      gitBranch: 'main',
+      notebooks: { source: 'GIT', referenceType: 'BRANCH', reference: 'main' },
       maxParallelTables: 6,
       rangeFrom: '-7d',
       schedule: { enabled: true, quartzCronExpression: '0 0 6 * * ?' },
@@ -193,11 +193,11 @@ describe('row check jobs', () => {
     const job = state.jobs.get(9);
     expect(job?.environments?.[0]?.spec?.dependencies?.[0]).toMatch(/^watersync@git\+/);
     expect(job?.tasks?.[0]?.environment_key).toBe('watersync_environment');
-    expect(job?.performance_target).toBe('STANDARD');
+    expect(job?.performance_target).toBe('PERFORMANCE_OPTIMIZED');
     expect(job?.job_clusters).toBeUndefined();
     expect(job?.run_as).toBeUndefined();
     expect((await listRowCheckJobs('dev', 'watersync'))[0]).toMatchObject({
-      compute: { mode: 'SERVERLESS', performanceTarget: 'STANDARD' },
+      compute: { mode: 'SERVERLESS', performanceTarget: 'PERFORMANCE_OPTIMIZED' },
       runAs: { mode: 'DEFAULT' },
     });
   });
@@ -205,7 +205,7 @@ describe('row check jobs', () => {
   it('runs on a job cluster as another identity, and reads both back', async () => {
     const compute = {
       mode: 'JOB_CLUSTER',
-      performanceTarget: 'STANDARD',
+      performanceTarget: 'PERFORMANCE_OPTIMIZED',
       sparkVersion: '17.3.x-scala2.13',
       driverNodeTypeId: 'm5.xlarge',
       workerNodeTypeId: 'm5.2xlarge',
@@ -232,6 +232,48 @@ describe('row check jobs', () => {
       compute,
       runAs: { mode: 'USER', principal: 'ops@example.com' },
     });
+  });
+
+  it('installs a wheel from a volume on serverless and job clusters, and reads it back', async () => {
+    const library = { source: 'WHEEL', path: '/Volumes/main/watersync/libs/watersync-0.4.0-py3-none-any.whl' };
+    await saveRowCheckJob(payload({ library }));
+    expect(state.jobs.get(9)?.environments?.[0]?.spec?.dependencies).toEqual([library.path]);
+    expect((await listRowCheckJobs('dev', 'watersync'))[0]).toMatchObject({ library });
+
+    const compute = {
+      mode: 'JOB_CLUSTER',
+      performanceTarget: 'PERFORMANCE_OPTIMIZED',
+      sparkVersion: '17.3.x-scala2.13',
+      driverNodeTypeId: 'm5.xlarge',
+      workerNodeTypeId: 'm5.xlarge',
+      minWorkers: 1,
+      maxWorkers: 2,
+    };
+    await saveRowCheckJob(payload({ library, compute }));
+    expect(state.jobs.get(9)?.tasks?.[0]?.libraries).toEqual([{ whl: library.path }]);
+    expect((await listRowCheckJobs('dev', 'watersync'))[0]).toMatchObject({ library, compute });
+  });
+
+  it('runs from a workspace folder or from Azure DevOps, and reads either back', async () => {
+    const notebooks = { source: 'WORKSPACE', basePath: '/Workspace/Users/me/watersync' };
+    const library = { source: 'PIP', requirement: 'watersync==0.4.0' };
+    await saveRowCheckJob(payload({ notebooks, library }));
+    const job = state.jobs.get(9);
+    expect(job?.git_source).toBeUndefined();
+    expect(job?.tasks?.[0]?.notebook_task).toMatchObject({
+      notebook_path: '/Workspace/Users/me/watersync/notebooks/Task - Row Check',
+      source: 'WORKSPACE',
+    });
+    expect((await listRowCheckJobs('dev', 'watersync'))[0]).toMatchObject({ notebooks, library });
+
+    const gitUrl = 'https://dev.azure.com/org/project/_git/watersync';
+    await saveRowCheckJob(payload({ notebooks: { source: 'GIT', gitUrl, referenceType: 'TAG', reference: 'v0.4.0' } }));
+    expect(state.jobs.get(9)?.git_source).toEqual({
+      git_url: gitUrl,
+      git_provider: 'azureDevOpsServices',
+      git_tag: 'v0.4.0',
+    });
+    expect(state.jobs.get(9)?.environments?.[0]?.spec?.dependencies).toEqual([`watersync@git+${gitUrl}@v0.4.0`]);
   });
 
   it('rejects a job cluster without node types, and a range start it cannot read', () => {

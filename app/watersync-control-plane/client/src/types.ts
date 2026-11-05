@@ -16,6 +16,10 @@ export type ConfigRow = {
   partition_column: string | null;
   predicate_column: string | null;
   epic_csa_enabled: boolean;
+  epic_change_method: string;
+  epic_change_procedure: string | null;
+  epic_change_skip_update_date: boolean;
+  epic_change_column_names: string | null;
   auto_cdc_from_snapshot: boolean;
   jdbc_url: string | null;
   jdbc_user: string | null;
@@ -158,6 +162,21 @@ export type Schedule = {
   timezoneId: string;
   pauseStatus: 'PAUSED' | 'UNPAUSED';
 };
+/** Where a job's notebooks come from: a Git repository at a branch, tag or commit, or a workspace folder. */
+export type JobNotebooks =
+  | {
+      source: 'GIT';
+      gitUrl: string;
+      /** Null when detected from the URL; set for self-hosted Git servers. */
+      gitProvider: string | null;
+      referenceType: 'BRANCH' | 'TAG' | 'COMMIT';
+      reference: string;
+    }
+  | { source: 'WORKSPACE'; basePath: string };
+
+/** Where a job's tasks install WaterSync from: the notebooks' Git repository, a wheel file, or a pip requirement. */
+export type JobLibrary = { source: 'GIT' } | { source: 'WHEEL'; path: string } | { source: 'PIP'; requirement: string };
+
 /**
  * A row check job, read back from the Databricks API (GET /api/row-checks/jobs). Each runs one check mode over
  * the whole location (ingestionGroup '') or one group, and any of them can start a check from the app.
@@ -170,8 +189,8 @@ export type RowCheckJob = {
   checkMode: RowCheckMode;
   /** A detailed check's range start, such as -30d; empty checks every row. */
   rangeFrom: string;
-  gitUrl: string;
-  gitBranch: string;
+  notebooks: JobNotebooks;
+  library: JobLibrary;
   maxParallelTables: number;
   schedule: Schedule;
   compute: JobCompute;

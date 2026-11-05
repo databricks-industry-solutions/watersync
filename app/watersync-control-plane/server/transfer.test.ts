@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
+import { importPayloadSchema } from './schemas.js';
 
 type Parameter = { name: string; value?: string };
 const execute = vi.fn<(statement: string, parameters?: Parameter[]) => Promise<unknown>>();
@@ -68,6 +70,46 @@ describe('validateImport', () => {
     });
   });
 
+  it('accepts files written before the EPIC stored-procedure settings existed', () => {
+    const { configs } = validateImport({ ...location, file: { configs: [config()], jobs: [] } });
+    expect(configs[0]).toMatchObject({
+      epicChangeMethod: 'csa_table',
+      epicChangeSkipUpdateDate: false,
+    });
+  });
+
+  it('rejects EPIC stored-procedure settings that are invalid or need EPIC CSA', () => {
+    const csa = { watermarkColumn: null, epicCsaEnabled: true, epicChangeMethod: 'stored_procedure' };
+    let error: unknown;
+    try {
+      validateImport({
+        ...location,
+        file: {
+          configs: [
+            config({ epicChangeMethod: 'stored_procedure' }),
+            config({ ...csa, sourceTableName: 'a', epicChangeProcedure: 'x; DROP TABLE y' }),
+            config({ ...csa, sourceTableName: 'b', epicChangeColumnNames: "A'--" }),
+            config({ ...csa, sourceTableName: 'c', epicChangeMethod: 'cdc' }),
+            config({ ...csa, sourceTableName: 'dbo.T; DROP TABLE x' }),
+            config({ ...csa, sourceTableName: 'dbo.e', keyColumns: 'ID) AND 1=1; EXEC x; SELECT (ID' }),
+          ],
+          jobs: [],
+        },
+      });
+    } catch (caught) {
+      error = caught;
+    }
+    const paths = (error as z.ZodError).issues.map((issue) => issue.path.join('.'));
+    expect(paths).toEqual([
+      'file.configs.0.epicChangeMethod',
+      'file.configs.1.epicChangeProcedure',
+      'file.configs.2.epicChangeColumnNames',
+      'file.configs.3.epicChangeMethod',
+      'file.configs.4.sourceTableName',
+      'file.configs.5.keyColumns',
+    ]);
+  });
+
   it('reports every invalid entry and duplicate with its position in the file', () => {
     let error: unknown;
     try {
@@ -75,7 +117,7 @@ describe('validateImport', () => {
         ...location,
         file: {
           configs: [config(), config({ watermarkColumn: null }), config()],
-          jobs: [job({ gitUrl: 'https://gitlab.com/x/y' })],
+          jobs: [job({ gitUrl: 'https://git.example.org/x/y' })],
         },
       });
     } catch (caught) {
@@ -84,8 +126,27 @@ describe('validateImport', () => {
     expect(error).toBeInstanceOf(z.ZodError);
     const paths = (error as z.ZodError).issues.map((issue) => issue.path.join('.'));
     expect(paths).toEqual(
-      expect.arrayContaining(['file.configs.1.watermarkColumn', 'file.jobs.0.gitUrl', 'file.configs.2'])
+      expect.arrayContaining(['file.configs.1.watermarkColumn', 'file.jobs.0.notebooks.gitProvider', 'file.configs.2'])
     );
+  });
+});
+
+describe('examples/watersync-config.json', () => {
+  it('is a valid import file, as the Import dialog and the CLI read it', () => {
+    const file: unknown = JSON.parse(
+      readFileSync(new URL('../../../examples/watersync-config.json', import.meta.url), 'utf8')
+    );
+    // The same steps as POST /api/import.
+    const body = importPayloadSchema.parse({ ...location, file });
+    const { configs, jobs, rowCheckJobs } = validateImport(body);
+    expect(importSummary(configs, jobs, rowCheckJobs)).toEqual([
+      { ingestionGroup: 'clarity_csa', configCount: 3, hasJobSettings: true, rowChecks: ['detailed'] },
+      { ingestionGroup: 'clarity_reference', configCount: 2, hasJobSettings: true, rowChecks: ['detailed'] },
+      { ingestionGroup: 'clarity_sp', configCount: 3, hasJobSettings: true, rowChecks: [] },
+      { ingestionGroup: 'finance', configCount: 2, hasJobSettings: true, rowChecks: [] },
+    ]);
+    // Plus the basic check of the whole location.
+    expect(rowCheckJobs).toHaveLength(3);
   });
 });
 
@@ -219,6 +280,59 @@ describe('importConfiguration', () => {
       jobs: [{ ingestionGroup: 'sales', jobId: 7, pipelineId: 'p', action: 'created' }],
       rowCheckJobs: [],
     });
+  });
+
+  it('stores EPIC stored-procedure settings only where they apply', async () => {
+    const csa = { watermarkColumn: null, epicCsaEnabled: true };
+    const procedure = { epicChangeProcedure: 'EPIC_UTIL.ESP_CR_ALTERED_ROWS', epicChangeSkipUpdateDate: true };
+    const entries = validateImport({
+      ...location,
+      file: {
+        configs: [
+          config({ ...csa, ...procedure, epicChangeMethod: 'stored_procedure', epicChangeColumnNames: 'A, B' }),
+          config({ ...csa, ...procedure, sourceTableName: 'public.csa' }),
+          config({ ...procedure, sourceTableName: 'public.plain' }),
+          config({
+            ...csa,
+            sourceTableName: 'public.default',
+            epicChangeMethod: 'stored_procedure',
+            epicChangeProcedure: '',
+          }),
+        ],
+        jobs: [],
+      },
+    });
+
+    await importConfiguration('dev', 'watersync', entries, { replaceGroups: false, deployJobs: false });
+
+    const rows = JSON.parse(execute.mock.calls[0][1]![0].value!) as Record<string, unknown>[];
+    expect(rows[0]).toMatchObject({
+      epic_change_method: 'stored_procedure',
+      epic_change_procedure: 'EPIC_UTIL.ESP_CR_ALTERED_ROWS',
+      epic_change_skip_update_date: true,
+      epic_change_column_names: 'A, B',
+    });
+    // CSA tables and non-EPIC rows keep no procedure settings; an empty procedure means Epic's default.
+    expect(rows[1]).toMatchObject({ epic_change_method: 'csa_table', epic_change_procedure: null });
+    expect(rows[2]).toMatchObject({ epic_change_method: null, epic_change_skip_update_date: false });
+    expect(rows[3]).toMatchObject({ epic_change_method: 'stored_procedure', epic_change_procedure: null });
+  });
+
+  it('deploys a job with the volume wheel it was exported with', async () => {
+    const wheel = '/Volumes/main/watersync/libs/watersync-0.4.0-py3-none-any.whl';
+    const entries = validateImport({
+      ...location,
+      file: { configs: [config()], jobs: [job({ libraryPath: wheel }), job({ ingestionGroup: 'hr' })] },
+    });
+    saveJob.mockResolvedValue({ jobId: 7, action: 'created' });
+
+    await importConfiguration('dev', 'watersync', entries, { replaceGroups: false, deployJobs: true });
+
+    expect(saveJob).toHaveBeenCalledWith(
+      expect.objectContaining({ ingestionGroup: 'sales', library: { source: 'WHEEL', path: wheel } })
+    );
+    // A file written before the setting existed installs from the GitHub branch.
+    expect(saveJob).toHaveBeenCalledWith(expect.objectContaining({ ingestionGroup: 'hr', library: { source: 'GIT' } }));
   });
 
   it('keeps going when a job fails and leaves other rows alone without replaceGroups', async () => {

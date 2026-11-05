@@ -17,6 +17,8 @@ jdbc_settings = setup.jdbc_settings()      # JDBC URL and credentials for config
 csa_rows = setup.epic_csa_config_rows()    # suggested EPIC CSA config rows
 ```
 
+`create_standard_tables()` also creates a mock of Epic's stored procedure in `epic_util`, to test the [stored-procedure approach](Running-Ingestion#epicstoredprocedureingestionworker). Use `setup.epic_csa_config_rows(epic_change_method="stored_procedure")` for config rows that use it.
+
 Simulate ongoing changes:
 
 ```python

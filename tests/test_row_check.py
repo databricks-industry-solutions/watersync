@@ -187,6 +187,24 @@ class RowCheckTest(unittest.TestCase):
         self.assertIn("CSA keeps changes only since 2026-10-15 00:00:00", checked)
         self.assertIn("more often than the CSA retention period", checked)
 
+    def test_time_range_on_a_stored_procedure_table_does_not_read_the_csa_table(self) -> None:
+        from datetime import datetime
+
+        runner = make_runner("detailed")
+        runner.range_from, runner.range_now = "-7d", datetime(2026, 10, 20, 9, 30)
+        worker = MagicMock()
+        config = make_config(
+            source_table_name="dbo.PAT_ENC",
+            key_columns="pat_enc_csn_id",
+            watermark_column="",
+            epic_csa_enabled=True,
+            epic_change_method="stored_procedure",
+        )
+        with patch.object(runner, "resolve_range", return_value=None):
+            where, selected, _ = runner.select_rows(config, worker, "sqlserver", {}, MagicMock(columns=[]))
+        worker.build_jdbc_reader.assert_not_called()
+        self.assertEqual(where, "1=1")
+
     def test_number_range_on_a_csa_table_stays_on_the_chunk_column(self) -> None:
         from pyspark.sql.types import IntegerType, StructField
 

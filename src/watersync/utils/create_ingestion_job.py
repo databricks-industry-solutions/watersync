@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import re
+from urllib.parse import urlparse
+
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service import pipelines as pl
 from databricks.sdk.service.compute import AutoScale, ClusterSpec, DataSecurityMode, Environment, Library
@@ -19,6 +22,38 @@ from databricks.sdk.service.jobs import (
 )
 
 from watersync.models import JobProvisioningSettings
+
+
+# The Git hosts a job's notebooks can come from, by hostname; the same list as the Control Plane app's.
+_GIT_PROVIDERS: list[tuple[re.Pattern[str], GitProvider]] = [
+    (re.compile(r"^github\.com$"), GitProvider.GIT_HUB),
+    (re.compile(r"^(dev\.azure\.com|.+\.visualstudio\.com)$"), GitProvider.AZURE_DEV_OPS_SERVICES),
+    (re.compile(r"^gitlab\.com$"), GitProvider.GIT_LAB),
+    (re.compile(r"^bitbucket\.org$"), GitProvider.BITBUCKET_CLOUD),
+    (re.compile(r"^git-codecommit\.[a-z0-9-]+\.amazonaws\.com$"), GitProvider.AWS_CODE_COMMIT),
+]
+
+
+def git_provider_for(git_url: str, explicit: str = "") -> GitProvider:
+    """The Databricks Git provider of a repository URL: GitHub, Azure DevOps, GitLab, Bitbucket Cloud or CodeCommit.
+
+    A self-hosted server can't be recognised from its hostname, so its provider is given (``explicit``).
+    """
+    if explicit:
+        return GitProvider(explicit)
+    host = (urlparse(git_url).hostname or "").lower()
+    for pattern, provider in _GIT_PROVIDERS:
+        if pattern.match(host):
+            return provider
+    raise ValueError(
+        f"Unknown Git repository host in {git_url!r}: set git_provider for a self-hosted server, or use github.com, "
+        "dev.azure.com, gitlab.com, bitbucket.org or AWS CodeCommit"
+    )
+
+
+def without_user_info(git_url: str) -> str:
+    """The URL without a user name, such as the org@ in Azure DevOps clone URLs; Git credentials come from Databricks."""
+    return re.sub(r"^(https?://)[^/@]+@", r"\1", git_url.strip(), flags=re.IGNORECASE)
 
 
 class IngestionJobProvisioner:
@@ -82,11 +117,16 @@ class IngestionJobProvisioner:
         use_git = bool(settings.git_url)
         source = Source.GIT if use_git else Source.WORKSPACE
 
+        if settings.git_tag and settings.git_commit:
+            raise ValueError("Set git_tag or git_commit, not both")
         git_source = (
             GitSource(
-                git_url=settings.git_url,
-                git_provider=GitProvider.GIT_HUB,
-                git_branch=settings.git_branch,
+                git_url=without_user_info(settings.git_url),
+                git_provider=git_provider_for(settings.git_url, settings.git_provider),
+                # A tag or a commit pins the run; otherwise it follows the branch.
+                git_tag=settings.git_tag or None,
+                git_commit=settings.git_commit or None,
+                git_branch=None if settings.git_tag or settings.git_commit else settings.git_branch,
             )
             if use_git
             else None

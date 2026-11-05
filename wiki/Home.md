@@ -21,6 +21,7 @@ WaterSync is a Python package and Databricks App for metadata-driven JDBC ingest
 | [Control Plane App](Control-Plane-App) | App pages, deployment, and every setting of the jobs it creates (compute, schedule, run as) |
 | [Row Checks](Row-Checks) | Tiered comparison of source and target tables: row counts, chunk aggregates, then the rows of differing chunks, and the job that runs it |
 | [Import and Export](Import-and-Export) | Moving a configuration between environments from the app or a deployment pipeline; file format |
+| [Bundle Deployment](Bundle-Deployment) | Deploying without the app: `databricks bundle deploy` for the code, `watersync-import` for the configuration and jobs |
 | [Job Provisioning](Job-Provisioning) | Creating jobs from Python or the CLI instead of the app |
 | [Lakebase Test Setup](Lakebase-Test-Setup) | A seeded Lakebase Postgres source for testing both workers |
 

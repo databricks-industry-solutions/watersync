@@ -4,6 +4,14 @@ bundle:
 include:
   - resources/*.yml
 
+# The watersync wheel, built from this checkout on every deploy. A resource that installs ../dist/*.whl makes the
+# bundle upload it to ${workspace.artifact_path}/.internal/, where jobs can install it as a wheel file.
+artifacts:
+  watersync:
+    type: whl
+    build: uv build --wheel
+    path: .
+
 sync:
   include:
     - app/**
@@ -18,20 +26,47 @@ variables:
     default: watersync-control-plane
   warehouse_id:
     description: SQL warehouse used by the Control Plane app for metadata reads and writes (override with --var warehouse_id=<id>)
-    lookup:
-      warehouse: "Shared Unity Catalog Serverless"
+    default: ""
   environment:
     description: Deployment environment (dev, staging, prod)
     default: dev
 
+# dev and prod deploy the code: notebooks, src/ and the wheel. Load configs and create jobs with watersync-import
+# (see wiki/Bundle-Deployment). The -app targets also deploy the Control Plane app.
 targets:
   dev:
     mode: development
     default: true
-    variables:
-      app_name: watersync-control-plane-dev
 
   prod:
     mode: production
+
+  dev-app:
+    mode: development
+    variables:
+      app_name: watersync-control-plane-dev
+      warehouse_id:
+        lookup:
+          warehouse: "Shared Unity Catalog Serverless"
+    resources:
+      apps:
+        watersync_control_plane: &control_plane_app
+          name: ${var.app_name}
+          description: Configure and monitor Watersync JDBC pipelines.
+          source_code_path: ./app/watersync-control-plane
+          resources:
+            - name: sql-warehouse
+              sql_warehouse:
+                id: ${var.warehouse_id}
+                permission: CAN_USE
+
+  prod-app:
+    mode: production
     variables:
       app_name: watersync-control-plane
+      warehouse_id:
+        lookup:
+          warehouse: "Shared Unity Catalog Serverless"
+    resources:
+      apps:
+        watersync_control_plane: *control_plane_app

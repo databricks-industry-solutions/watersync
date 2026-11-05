@@ -1,7 +1,15 @@
 import { z } from 'zod';
+import { checkJobSource, librarySchema, notebooksSchema, withLegacySource } from './jobSource.js';
 
 export const identifierPart = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
 const coercedBoolean = z.preprocess((val) => (typeof val === 'string' ? val === 'true' : val), z.boolean());
+// An empty field means "not set".
+const optionalText = (schema: z.ZodString) =>
+  z.preprocess((val) => (typeof val === 'string' && !val.trim() ? null : val), schema.nullable().optional());
+// Same rules as the Python worker: the procedure and column names are put into SQL.
+const procedureName = /^[A-Za-z_][\w$#]*(\.[A-Za-z_][\w$#]*){0,2}$/;
+const columnNames = /^[A-Za-z_][\w$#]*(\s*,\s*[A-Za-z_][\w$#]*)*$/;
+export const epicChangeMethods = ['csa_table', 'stored_procedure'] as const;
 export const locationSchema = z.object({ catalog: identifierPart, schema: identifierPart });
 export const configSchema = locationSchema
   .extend({
@@ -17,6 +25,16 @@ export const configSchema = locationSchema
     partitionColumn: z.string().nullable().optional(),
     predicateColumn: z.string().nullable().optional(),
     epicCsaEnabled: coercedBoolean,
+    // Optional so export files written before these settings existed still import.
+    epicChangeMethod: z
+      .enum(epicChangeMethods)
+      .nullish()
+      .transform((value) => value ?? 'csa_table'),
+    epicChangeProcedure: optionalText(
+      z.string().trim().regex(procedureName, 'Use a procedure name such as EPIC_UTIL.ESP_CR_ALTERED_ROWS')
+    ),
+    epicChangeSkipUpdateDate: coercedBoolean.optional().default(false),
+    epicChangeColumnNames: optionalText(z.string().trim().regex(columnNames, 'Use comma-separated column names')),
     autoCdcFromSnapshot: coercedBoolean,
     jdbcUrl: z.string().nullable().optional(),
     jdbcUser: z.string().nullable().optional(),
@@ -37,6 +55,30 @@ export const configSchema = locationSchema
         path: ['epicCsaEnabled'],
         message: 'EPIC CSA requires incremental ingestion',
       });
+    }
+    if (value.epicChangeMethod === 'stored_procedure' && !value.epicCsaEnabled) {
+      context.addIssue({
+        code: 'custom',
+        path: ['epicChangeMethod'],
+        message: 'The EPIC stored procedure requires EPIC CSA mode',
+      });
+    }
+    // The procedure's batch can run several statements: the same rules as the Python worker.
+    if (value.epicChangeMethod === 'stored_procedure' && value.epicCsaEnabled) {
+      if (!procedureName.test(value.sourceTableName)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['sourceTableName'],
+          message: 'Use a plain table name, such as dbo.PAT_ENC, with the stored procedure',
+        });
+      }
+      if (value.keyColumns?.trim() && !columnNames.test(value.keyColumns.trim())) {
+        context.addIssue({
+          code: 'custom',
+          path: ['keyColumns'],
+          message: 'Use comma-separated column names with the stored procedure',
+        });
+      }
     }
     if (value.autoCdcFromSnapshot && value.ingestionType !== 'full') {
       context.addIssue({
@@ -215,22 +257,23 @@ export const toRunAs = (target: RunAsTarget) =>
     : target.mode === 'SERVICE_PRINCIPAL'
       ? { service_principal_name: target.principal }
       : undefined;
-export const jobPayloadSchema = locationSchema.extend({
-  ingestionGroup: z.string().min(1),
-  gitUrl: z.url().refine((value) => new URL(value).hostname === 'github.com', 'Repository must be hosted on GitHub'),
-  gitBranch: z
-    .string()
-    .trim()
-    .min(1)
-    // The branch ends up in a pip requirement (and a %pip line for classic pipelines).
-    .regex(/^[^\s"'`\\]+$/, 'Branch must not contain whitespace, quotes or backslashes'),
-  foreachConcurrency: z.number().int().min(1).max(100),
-  cdcPipelineId: z.string().trim().nullable().optional(),
-  schedule: scheduleSchema,
-  compute: computeSchema,
-  pipelineCompute: pipelineComputeSchema.prefault({ mode: 'SERVERLESS' }),
-  runAs: runAsSchema.prefault({}),
-});
+// Where the job's notebooks come from and where its tasks install WaterSync from (see jobSource.ts).
+const jobSourceFields = { notebooks: notebooksSchema, library: librarySchema.prefault({ source: 'GIT' }) };
+export const jobPayloadSchema = z.preprocess(
+  withLegacySource,
+  locationSchema
+    .extend({
+      ingestionGroup: z.string().min(1),
+      ...jobSourceFields,
+      foreachConcurrency: z.number().int().min(1).max(100),
+      cdcPipelineId: z.string().trim().nullable().optional(),
+      schedule: scheduleSchema,
+      compute: computeSchema,
+      pipelineCompute: pipelineComputeSchema.prefault({ mode: 'SERVERLESS' }),
+      runAs: runAsSchema.prefault({}),
+    })
+    .superRefine(checkJobSource)
+);
 // A detailed check's range start: a number, a date, a timestamp or days back (-30d); empty checks every row.
 const rangeBound = z
   .string()
@@ -239,28 +282,32 @@ const rangeBound = z
     /^$|^-?\d+(\.\d+)?$|^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}:\d{2})?$|^-\d{1,5}d$/,
     'Use a number, a date (2026-09-01), a timestamp (2026-09-01 12:00:00) or days back (-30d)'
   );
-export const rowCheckJobPayloadSchema = locationSchema.extend({
-  gitUrl: jobPayloadSchema.shape.gitUrl,
-  gitBranch: jobPayloadSchema.shape.gitBranch,
-  maxParallelTables: z.number().int().min(1).max(32),
-  schedule: scheduleSchema,
-  // The same compute and identity options as an ingestion job: not every workspace has serverless jobs.
-  compute: computeSchema.prefault({
-    mode: 'SERVERLESS',
-    performanceTarget: 'STANDARD',
-    sparkVersion: '',
-    driverNodeTypeId: '',
-    workerNodeTypeId: '',
-    minWorkers: 1,
-    maxWorkers: 4,
-  }),
-  runAs: runAsSchema.shape.job,
-  // Which tables the job checks by default: one ingestion group, or every group ('') with the location's job.
-  ingestionGroup: z.string().trim().optional().default(''),
-  checkMode: z.enum(['basic', 'detailed']).optional().default('basic'),
-  // A detailed check's range start; ignored for a basic check.
-  rangeFrom: rangeBound.optional().default(''),
-});
+export const rowCheckJobPayloadSchema = z.preprocess(
+  withLegacySource,
+  locationSchema
+    .extend({
+      ...jobSourceFields,
+      maxParallelTables: z.number().int().min(1).max(32),
+      schedule: scheduleSchema,
+      // The same compute and identity options as an ingestion job: not every workspace has serverless jobs.
+      compute: computeSchema.prefault({
+        mode: 'SERVERLESS',
+        performanceTarget: 'PERFORMANCE_OPTIMIZED',
+        sparkVersion: '',
+        driverNodeTypeId: '',
+        workerNodeTypeId: '',
+        minWorkers: 1,
+        maxWorkers: 4,
+      }),
+      runAs: runAsSchema.shape.job,
+      // Which tables the job checks by default: one ingestion group, or every group ('') with the location's job.
+      ingestionGroup: z.string().trim().optional().default(''),
+      checkMode: z.enum(['basic', 'detailed']).optional().default('basic'),
+      // A detailed check's range start; ignored for a basic check.
+      rangeFrom: rangeBound.optional().default(''),
+    })
+    .superRefine(checkJobSource)
+);
 export const rowCheckRunPayloadSchema = locationSchema.extend({
   checkMode: z.enum(['basic', 'detailed']),
   // Empty means every group or table; a detailed check usually names one table.
@@ -299,6 +346,20 @@ export const importPayloadSchema = locationSchema.extend({
   // Validate and summarize without writing anything.
   dryRun: z.boolean().optional().default(false),
 });
+
+/**
+ * The EPIC stored-procedure columns as stored: the method only for EPIC CSA rows, and the procedure
+ * settings only when the stored procedure is used. Shared by the single-row save and the import.
+ */
+export const epicChangeColumns = (config: ConfigPayload) => {
+  const storedProcedure = config.epicCsaEnabled && config.epicChangeMethod === 'stored_procedure';
+  return {
+    epic_change_method: config.epicCsaEnabled ? config.epicChangeMethod : null,
+    epic_change_procedure: storedProcedure ? (config.epicChangeProcedure ?? null) : null,
+    epic_change_skip_update_date: storedProcedure && config.epicChangeSkipUpdateDate,
+    epic_change_column_names: storedProcedure ? (config.epicChangeColumnNames ?? null) : null,
+  };
+};
 
 export type SourceDiscovery = z.infer<typeof sourceDiscoverySchema>;
 export type SourceDatabaseType = z.infer<typeof sourceDatabaseType>;

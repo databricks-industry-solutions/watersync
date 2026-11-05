@@ -2,14 +2,12 @@ import { createHash } from 'node:crypto';
 import { pipelines } from '@databricks/sdk-experimental';
 import { execute, parameter, tableName, workspace } from './sql.js';
 import { logger } from './logging.js';
+import { pipToken } from './jobSource.js';
 import type { PipelineCompute } from './schemas.js';
 
 export const plannerNotebookPath = 'notebooks/Task - Plan Configs';
 export const workerNotebookPath = 'notebooks/Task - Run Ingestion';
 export const selectiveRefreshNotebookPath = 'src/watersync/utils/selective_pipeline_refresh';
-
-export const watersyncDependency = (gitUrl: string, gitBranch: string) =>
-  `watersync@git+${gitUrl.replace(/\.git$/, '')}.git@${gitBranch}`;
 
 export async function groupNeedsCdcPipeline(catalog: string, schema: string, ingestionGroup: string) {
   const response = await execute(
@@ -32,8 +30,11 @@ const pipelineBootstrap =
 
 // Classic pipeline clusters cannot install pip packages and `environment` only applies to serverless,
 // so classic pipelines run a notebook that installs watersync with %pip before the bootstrap code.
-const classicPipelineBootstrap = (dependency: string) =>
-  `# Databricks notebook source\n# MAGIC %pip install "${dependency}"\n\n# COMMAND ----------\n\n${pipelineBootstrap.replace('from __future__ import annotations\n\n', '')}`;
+const classicPipelineBootstrap = (dependency: string) => {
+  // Validation already rejects these; the requirement must never end the %pip line or its quotes.
+  if (!pipToken.test(dependency)) throw new Error(`Refusing to write a %pip line for ${JSON.stringify(dependency)}`);
+  return `# Databricks notebook source\n# MAGIC %pip install "${dependency}"\n\n# COMMAND ----------\n\n${pipelineBootstrap.replace('from __future__ import annotations\n\n', '')}`;
+};
 
 export const cdcPipelineName = (ingestionGroup: string) => `[${ingestionGroup}] CDC SCD2 Pipeline`;
 
@@ -42,8 +43,8 @@ export async function ensureCdcPipeline(opts: {
   catalog: string;
   schema: string;
   ingestionGroup: string;
-  gitUrl: string;
-  gitBranch: string;
+  // The pip requirement the pipeline installs WaterSync with, the same as the job's tasks.
+  dependency: string;
   compute: PipelineCompute;
   runAs?: pipelines.RunAs;
 }) {
@@ -62,10 +63,10 @@ export async function ensureCdcPipeline(opts: {
   const genDir = '/Shared/watersync-generated-pipelines';
   const bootstrapPath = `${genDir}/cdc_pipeline_bootstrap.py`;
   await workspace.workspace.mkdirs({ path: genDir });
-  const dependency = watersyncDependency(opts.gitUrl, opts.gitBranch);
+  const { dependency } = opts;
   let library: pipelines.PipelineLibrary;
   if (opts.compute.mode === 'CLASSIC') {
-    // One notebook per group, because the %pip line carries the group's git source.
+    // One notebook per group, because the %pip line carries the group's package source.
     const groupSlug = opts.ingestionGroup.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 60);
     const groupHash = createHash('sha256').update(opts.ingestionGroup).digest('hex').slice(0, 8);
     const notebookPath = `${genDir}/cdc_pipeline_bootstrap_classic_${groupSlug}_${groupHash}`;

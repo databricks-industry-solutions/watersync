@@ -50,7 +50,8 @@ import { fqn, displayTime, runDuration, formString } from '../utils';
 import { RunTimeline, StatusBadge } from './JobRuns';
 import { useControl } from '../lib/control';
 import { PageTitle, ErrorState, ScheduleFields } from './shared';
-import { JobComputeFields, NodeTypeOptions, PerformanceTargetField, RunAsFields } from './JobFields';
+import { JobComputeFields, NodeTypeOptions, PerformanceTargetField, RunAsFields, SourceFields } from './JobFields';
+import { sourceFromForm } from '../lib/jobSource';
 import { computeFromForm, useNodeTypes } from '../lib/jobCompute';
 import { FilterBar } from './FilterBar';
 import { Pagination } from './Pagination';
@@ -550,10 +551,8 @@ function JobDialog({
   const [ingestionGroup, setIngestionGroup] = useState(initialGroup);
   const [scheduleEnabled, setScheduleEnabled] = useState(false);
   const [scheduleActive, setScheduleActive] = useState(true);
-  const [gitUrl, setGitUrl] = useState('https://github.com/databricks-industry-solutions/watersync');
-  const [gitBranch, setGitBranch] = useState('main');
   const [computeMode, setComputeMode] = useState<'SERVERLESS' | 'JOB_CLUSTER'>('SERVERLESS');
-  const [performanceTarget, setPerformanceTarget] = useState<PerformanceTarget>('STANDARD');
+  const [performanceTarget, setPerformanceTarget] = useState<PerformanceTarget>('PERFORMANCE_OPTIMIZED');
   const [tab, setTab] = useState('job');
   const [pipelineComputeMode, setPipelineComputeMode] = useState<'SERVERLESS' | 'CLASSIC'>('SERVERLESS');
   const [pipelinePhoton, setPipelinePhoton] = useState(false);
@@ -591,8 +590,7 @@ function JobDialog({
         body: JSON.stringify({
           ...location,
           ingestionGroup,
-          gitUrl: form.get('gitUrl'),
-          gitBranch: form.get('gitBranch'),
+          ...sourceFromForm(form),
           foreachConcurrency: Number(form.get('foreachConcurrency')),
           cdcPipelineId: selectedGroup?.enabled_incremental_source_count ? form.get('cdcPipelineId') : null,
           schedule: {
@@ -643,7 +641,7 @@ function JobDialog({
           <Tabs value={tab} onValueChange={setTab} className="w-full">
             <TabsList className="flex h-auto w-full [&>button]:flex-auto [&>button]:px-3">
               <TabsTrigger value="job">Job configuration</TabsTrigger>
-              <TabsTrigger value="source">Git source &amp; execution</TabsTrigger>
+              <TabsTrigger value="source">Source &amp; execution</TabsTrigger>
               <TabsTrigger value="compute">Job Compute</TabsTrigger>
               {hasCdcPipeline && <TabsTrigger value="pipeline">SDP Compute</TabsTrigger>}
               <TabsTrigger value="schedule">Schedule</TabsTrigger>
@@ -708,27 +706,7 @@ function JobDialog({
             </TabsContent>
             <TabsContent value="source" data-tab="source" forceMount className="mt-4 data-[state=inactive]:hidden">
               <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-2 md:col-span-2">
-                  <Label htmlFor="git-url">GitHub repository URL</Label>
-                  <Input
-                    id="git-url"
-                    name="gitUrl"
-                    type="url"
-                    value={gitUrl}
-                    onChange={(event) => setGitUrl(event.target.value)}
-                    placeholder="https://github.com/organization/repository"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="git-branch">Branch</Label>
-                  <Input
-                    id="git-branch"
-                    name="gitBranch"
-                    value={gitBranch}
-                    onChange={(event) => setGitBranch(event.target.value)}
-                    placeholder="main"
-                  />
-                </div>
+                <SourceFields id="job-source" />
                 <div className="space-y-2">
                   <Label htmlFor="concurrency">Parallel tables</Label>
                   <Input
@@ -763,15 +741,6 @@ function JobDialog({
                       When blank, WaterSync automatically provisions a serverless CDC SCD2 pipeline for this group.
                     </p>
                   )}
-                </div>
-                <div className="space-y-2 md:col-span-2">
-                  <Label>Task library</Label>
-                  <div className="break-all rounded-md border bg-muted/30 p-3 font-mono text-xs">
-                    watersync@git+{gitUrl.replace(/\.git$/, '')}.git@{gitBranch || 'main'}
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Installed on the planner and every ingestion worker task from the selected branch.
-                  </p>
                 </div>
               </div>
             </TabsContent>

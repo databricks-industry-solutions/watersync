@@ -190,6 +190,7 @@ Applied ids are tracked in `<catalog>.<schema>._watersync_migrations`. Tables wh
 | `002_add_uc_secret_name`      | `uc_secret_name` column                                |
 | `003_add_connection_database` | `connection_database` column                           |
 | `004_create_row_checks`       | `_watersync_row_checks` (see [Row Checks](Row-Checks)) |
+| `005_add_epic_change_columns` | `epic_change_*` columns                                |
 
 ## Logging and Diagnostics
 

@@ -21,6 +21,8 @@ full_refresh_targets = planner.detect_full_refresh_targets(runtime.ingestion_gro
 # Publish task values for downstream tasks
 dbutils.jobs.taskValues.set(key="table_configs", value=payload)
 dbutils.jobs.taskValues.set(key="full_refresh_targets", value=full_refresh_targets)
+# Gates the selective_pipeline_refresh task, so it only starts when there is something to refresh.
+dbutils.jobs.taskValues.set(key="full_refresh_count", value=len(full_refresh_targets))
 print(payload)
 if full_refresh_targets:
     print(f"\nFull refresh targets: {full_refresh_targets}")

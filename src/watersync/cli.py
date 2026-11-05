@@ -2,18 +2,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 
-from pyspark.sql import SparkSession
+from typing import Any
 
-from watersync.config_planner import IngestionConfigPlanner
-from watersync.ingestion import JdbcIngestionOrchestrator
 from watersync.models import JdbcRuntimeSettings, JobProvisioningSettings
-from watersync.row_check import RowCheckRunner
-from watersync.utils import IngestionJobProvisioner, LakebaseTestDatabaseSetup, UnityCatalogSetup
+
+# Each command imports what it needs when it runs: the ones that only call the Databricks API, such as
+# watersync-create-job, then work outside Databricks without PySpark or Delta Lake installed.
 
 
-def active_spark() -> SparkSession:
+def active_spark() -> Any:
+    from pyspark.sql import SparkSession
+
     return SparkSession.getActiveSession() or SparkSession.builder.getOrCreate()
 
 
@@ -41,6 +43,8 @@ def plan_configs_main(**kwargs) -> None:
         parser.add_argument("--publish-task-value", default="false")
         args = parser.parse_args()
 
+    from watersync.config_planner import IngestionConfigPlanner
+
     spark = active_spark()
     planner = IngestionConfigPlanner(spark=spark, runtime=build_runtime_settings(args))
     payload = planner.build_for_each_inputs_json(args.ingestion_group)
@@ -65,6 +69,8 @@ def run_ingestion_main(**kwargs) -> None:
         parser.add_argument("--source-table-name", default="")
         args = parser.parse_args()
 
+    from watersync.ingestion import JdbcIngestionOrchestrator
+
     spark = active_spark()
     runtime = build_runtime_settings(args)
     orchestrator = JdbcIngestionOrchestrator(spark=spark, runtime=runtime)
@@ -88,6 +94,8 @@ def row_check_main(**kwargs) -> None:
         parser.add_argument("--range-to", dest="range_to", default="")
         args = parser.parse_args()
 
+    from watersync.row_check import RowCheckRunner
+
     runner = RowCheckRunner(
         spark=active_spark(),
         runtime=build_runtime_settings(args),
@@ -109,13 +117,26 @@ def create_job_main(**kwargs) -> None:
         parser.add_argument("--configuration-fqn", dest="configuration_fqn", required=True)
         parser.add_argument("--watermark-fqn", dest="watermark_fqn", required=True)
         parser.add_argument("--ingestion-group", dest="ingestion_group", required=True)
-        parser.add_argument("--wheel-uri", required=True)
+        parser.add_argument(
+            "--wheel-uri",
+            required=True,
+            help="Wheel in a volume or the workspace, or any pip requirement (e.g. watersync==0.4.0)",
+        )
         parser.add_argument("--planner-notebook-path", required=True)
         parser.add_argument("--worker-notebook-path", required=True)
         parser.add_argument("--cdc-pipeline-id", default="")
         parser.add_argument("--cdc-pipeline-file-path", default=str(Path.cwd() / "src" / "watersync" / "pipeline_bootstrap.py"))
         parser.add_argument("--foreach-concurrency", default=4, type=int)
+        parser.add_argument("--git-url", default="", help="Repository the notebooks run from; empty for workspace paths")
+        parser.add_argument("--git-branch", default="main")
+        parser.add_argument("--git-tag", default="", help="Pin the notebooks to a tag instead of the branch")
+        parser.add_argument("--git-commit", default="", help="Pin the notebooks to a commit instead of the branch")
+        parser.add_argument(
+            "--git-provider", default="", help="For a self-hosted server, e.g. gitHubEnterprise; detected otherwise"
+        )
         args = parser.parse_args()
+
+    from watersync.utils.create_ingestion_job import IngestionJobProvisioner
 
     provisioner = IngestionJobProvisioner()
     settings = JobProvisioningSettings(
@@ -128,8 +149,78 @@ def create_job_main(**kwargs) -> None:
         cdc_pipeline_id=getattr(args, "cdc_pipeline_id", ""),
         cdc_pipeline_file_path=getattr(args, "cdc_pipeline_file_path", str(Path.cwd() / "src" / "watersync" / "pipeline_bootstrap.py")),
         foreach_concurrency=int(getattr(args, "foreach_concurrency", 4)),
+        git_url=getattr(args, "git_url", ""),
+        git_branch=getattr(args, "git_branch", "main"),
+        git_tag=getattr(args, "git_tag", ""),
+        git_commit=getattr(args, "git_commit", ""),
+        git_provider=getattr(args, "git_provider", ""),
     )
     print(json.dumps(provisioner.create_or_update_job(settings), default=str))
+
+
+def import_config_main(argv: list[str] | None = None) -> int:
+    """Imports a WaterSync configuration file without the Control Plane app.
+
+    Validates the file, writes the config rows through a SQL warehouse, and (with --deploy-jobs) creates or
+    updates the jobs, CDC pipelines and row check jobs. With --bundle-root, every job runs its notebooks from that
+    bundle deployment's files and installs the wheel it built, whatever the file says.
+    """
+    from watersync.config_import import ImportValidationError, bundle_wheel, import_configuration, use_bundle, validate_file
+
+    parser = argparse.ArgumentParser(prog="watersync-import", description=import_config_main.__doc__.splitlines()[0])
+    parser.add_argument("--file", required=True, type=Path, help="Export file (format watersync-config)")
+    parser.add_argument("--catalog", required=True)
+    parser.add_argument("--schema", required=True)
+    parser.add_argument("--warehouse-id", help="SQL warehouse that writes the config rows (not needed with --dry-run)")
+    parser.add_argument("--profile", help="Databricks CLI profile (default: unified auth from the environment)")
+    parser.add_argument(
+        "--bundle-root",
+        help="A bundle deployment's root, e.g. /Workspace/Users/me/.bundle/watersync/dev: jobs run its files and wheel",
+    )
+    parser.add_argument("--replace-groups", action="store_true", help="Delete rows of the file's groups it doesn't list")
+    parser.add_argument("--deploy-jobs", action="store_true", help="Create or update the jobs in the file")
+    parser.add_argument("--dry-run", action="store_true", help="Only validate the file")
+    args = parser.parse_args(argv)
+    for flag, name in (("--catalog", args.catalog), ("--schema", args.schema)):
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+            parser.error(f"{flag} must be a plain name (letters, digits and _)")
+
+    try:
+        validated = validate_file(json.loads(args.file.read_text()))
+    except ImportValidationError as error:
+        print(f"{args.file} is not valid:\n{error}")
+        return 1
+    groups = sorted({config["ingestionGroup"] for config in validated.configs})
+    summary = (
+        f"{len(validated.configs)} source tables in {len(groups)} groups, {len(validated.jobs)} jobs, "
+        f"{len(validated.row_check_jobs)} row check jobs"
+    )
+    if args.dry_run and not args.bundle_root:
+        print(f"Valid: {summary}")
+        return 0
+
+    from databricks.sdk import WorkspaceClient
+
+    workspace = WorkspaceClient(profile=args.profile) if args.profile else WorkspaceClient()
+    if args.bundle_root:
+        wheel = bundle_wheel(workspace, args.bundle_root)
+        use_bundle(validated, f"{args.bundle_root.rstrip('/')}/files", wheel)
+        print(f"Jobs use the bundle at {args.bundle_root}: notebooks from files/, {wheel.rsplit('/', 1)[-1]}")
+    if args.dry_run:
+        print(f"Valid: {summary}")
+        return 0
+    if not args.warehouse_id:
+        parser.error("--warehouse-id is required unless --dry-run")
+    succeeded = import_configuration(
+        workspace,
+        args.warehouse_id,
+        args.catalog,
+        args.schema,
+        validated,
+        replace_groups=args.replace_groups,
+        deploy_jobs=args.deploy_jobs,
+    )
+    return 0 if succeeded else 1
 
 
 def setup_lakebase_main(**kwargs) -> None:
@@ -144,6 +235,8 @@ def setup_lakebase_main(**kwargs) -> None:
         parser.add_argument("--order-count", type=int, default=500)
         parser.add_argument("--simulate-updates", action="store_true")
         args = parser.parse_args()
+
+    from watersync.utils.lakebase_test_database_setup import LakebaseTestDatabaseSetup
 
     setup = LakebaseTestDatabaseSetup(
         project_id=getattr(args, "project_id", "watersync-jdbc-test"),
@@ -166,6 +259,8 @@ def setup_uc_main(**kwargs) -> None:
         parser.add_argument("--schema", required=True)
         parser.add_argument("--truncate-existing", action="store_true")
         args = parser.parse_args()
+
+    from watersync.utils.uc_setup import UnityCatalogSetup
 
     setup = UnityCatalogSetup(active_spark(), catalog=args.catalog, schema=args.schema)
     setup.create_all(truncate_existing=getattr(args, "truncate_existing", False))
