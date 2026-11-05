@@ -113,7 +113,7 @@ describe('validateImport', () => {
         ...location,
         file: {
           configs: [config(), config({ watermarkColumn: null }), config()],
-          jobs: [job({ gitUrl: 'https://gitlab.com/x/y' })],
+          jobs: [job({ gitUrl: 'https://git.example.org/x/y' })],
         },
       });
     } catch (caught) {
@@ -122,7 +122,7 @@ describe('validateImport', () => {
     expect(error).toBeInstanceOf(z.ZodError);
     const paths = (error as z.ZodError).issues.map((issue) => issue.path.join('.'));
     expect(paths).toEqual(
-      expect.arrayContaining(['file.configs.1.watermarkColumn', 'file.jobs.0.gitUrl', 'file.configs.2'])
+      expect.arrayContaining(['file.configs.1.watermarkColumn', 'file.jobs.0.notebooks.gitProvider', 'file.configs.2'])
     );
   });
 });
@@ -324,9 +324,11 @@ describe('importConfiguration', () => {
 
     await importConfiguration('dev', 'watersync', entries, { replaceGroups: false, deployJobs: true });
 
-    expect(saveJob).toHaveBeenCalledWith(expect.objectContaining({ ingestionGroup: 'sales', libraryPath: wheel }));
+    expect(saveJob).toHaveBeenCalledWith(
+      expect.objectContaining({ ingestionGroup: 'sales', library: { source: 'WHEEL', path: wheel } })
+    );
     // A file written before the setting existed installs from the GitHub branch.
-    expect(saveJob).toHaveBeenCalledWith(expect.objectContaining({ ingestionGroup: 'hr', libraryPath: null }));
+    expect(saveJob).toHaveBeenCalledWith(expect.objectContaining({ ingestionGroup: 'hr', library: { source: 'GIT' } }));
   });
 
   it('keeps going when a job fails and leaves other rows alone without replaceGroups', async () => {

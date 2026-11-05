@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { checkJobSource, librarySchema, notebooksSchema, withLegacySource } from './jobSource.js';
 
 export const identifierPart = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
 const coercedBoolean = z.preprocess((val) => (typeof val === 'string' ? val === 'true' : val), z.boolean());
@@ -239,36 +240,23 @@ export const toRunAs = (target: RunAsTarget) =>
     : target.mode === 'SERVICE_PRINCIPAL'
       ? { service_principal_name: target.principal }
       : undefined;
-export const jobPayloadSchema = locationSchema.extend({
-  ingestionGroup: z.string().min(1),
-  gitUrl: z.url().refine((value) => new URL(value).hostname === 'github.com', 'Repository must be hosted on GitHub'),
-  gitBranch: z
-    .string()
-    .trim()
-    .min(1)
-    // The branch ends up in a pip requirement (and a %pip line for classic pipelines).
-    .regex(/^[^\s"'`\\]+$/, 'Branch must not contain whitespace, quotes or backslashes'),
-  // A wheel in a Unity Catalog volume to install WaterSync from instead of the GitHub branch. It ends up in a pip
-  // requirement and a %pip line, like the branch.
-  // Missing or blank means the GitHub branch; files exported before this setting existed have none.
-  libraryPath: z.preprocess(
-    (value) => (value === undefined || (typeof value === 'string' && !value.trim()) ? null : value),
-    z
-      .string()
-      .trim()
-      .regex(
-        /^\/Volumes\/[^/\s"'`\\]+\/[^/\s"'`\\]+\/[^/\s"'`\\]+\/[^\s"'`\\]*[^/\s"'`\\]\.whl$/,
-        'Use a wheel file in a Unity Catalog volume: /Volumes/<catalog>/<schema>/<volume>/<file>.whl'
-      )
-      .nullable()
-  ),
-  foreachConcurrency: z.number().int().min(1).max(100),
-  cdcPipelineId: z.string().trim().nullable().optional(),
-  schedule: scheduleSchema,
-  compute: computeSchema,
-  pipelineCompute: pipelineComputeSchema.prefault({ mode: 'SERVERLESS' }),
-  runAs: runAsSchema.prefault({}),
-});
+// Where the job's notebooks come from and where its tasks install WaterSync from (see jobSource.ts).
+const jobSourceFields = { notebooks: notebooksSchema, library: librarySchema.prefault({ source: 'GIT' }) };
+export const jobPayloadSchema = z.preprocess(
+  withLegacySource,
+  locationSchema
+    .extend({
+      ingestionGroup: z.string().min(1),
+      ...jobSourceFields,
+      foreachConcurrency: z.number().int().min(1).max(100),
+      cdcPipelineId: z.string().trim().nullable().optional(),
+      schedule: scheduleSchema,
+      compute: computeSchema,
+      pipelineCompute: pipelineComputeSchema.prefault({ mode: 'SERVERLESS' }),
+      runAs: runAsSchema.prefault({}),
+    })
+    .superRefine(checkJobSource)
+);
 // A detailed check's range start: a number, a date, a timestamp or days back (-30d); empty checks every row.
 const rangeBound = z
   .string()
@@ -277,29 +265,32 @@ const rangeBound = z
     /^$|^-?\d+(\.\d+)?$|^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}:\d{2})?$|^-\d{1,5}d$/,
     'Use a number, a date (2026-09-01), a timestamp (2026-09-01 12:00:00) or days back (-30d)'
   );
-export const rowCheckJobPayloadSchema = locationSchema.extend({
-  gitUrl: jobPayloadSchema.shape.gitUrl,
-  gitBranch: jobPayloadSchema.shape.gitBranch,
-  libraryPath: jobPayloadSchema.shape.libraryPath,
-  maxParallelTables: z.number().int().min(1).max(32),
-  schedule: scheduleSchema,
-  // The same compute and identity options as an ingestion job: not every workspace has serverless jobs.
-  compute: computeSchema.prefault({
-    mode: 'SERVERLESS',
-    performanceTarget: 'STANDARD',
-    sparkVersion: '',
-    driverNodeTypeId: '',
-    workerNodeTypeId: '',
-    minWorkers: 1,
-    maxWorkers: 4,
-  }),
-  runAs: runAsSchema.shape.job,
-  // Which tables the job checks by default: one ingestion group, or every group ('') with the location's job.
-  ingestionGroup: z.string().trim().optional().default(''),
-  checkMode: z.enum(['basic', 'detailed']).optional().default('basic'),
-  // A detailed check's range start; ignored for a basic check.
-  rangeFrom: rangeBound.optional().default(''),
-});
+export const rowCheckJobPayloadSchema = z.preprocess(
+  withLegacySource,
+  locationSchema
+    .extend({
+      ...jobSourceFields,
+      maxParallelTables: z.number().int().min(1).max(32),
+      schedule: scheduleSchema,
+      // The same compute and identity options as an ingestion job: not every workspace has serverless jobs.
+      compute: computeSchema.prefault({
+        mode: 'SERVERLESS',
+        performanceTarget: 'STANDARD',
+        sparkVersion: '',
+        driverNodeTypeId: '',
+        workerNodeTypeId: '',
+        minWorkers: 1,
+        maxWorkers: 4,
+      }),
+      runAs: runAsSchema.shape.job,
+      // Which tables the job checks by default: one ingestion group, or every group ('') with the location's job.
+      ingestionGroup: z.string().trim().optional().default(''),
+      checkMode: z.enum(['basic', 'detailed']).optional().default('basic'),
+      // A detailed check's range start; ignored for a basic check.
+      rangeFrom: rangeBound.optional().default(''),
+    })
+    .superRefine(checkJobSource)
+);
 export const rowCheckRunPayloadSchema = locationSchema.extend({
   checkMode: z.enum(['basic', 'detailed']),
   // Empty means every group or table; a detailed check usually names one table.

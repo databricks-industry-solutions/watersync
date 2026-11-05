@@ -109,12 +109,23 @@ def create_job_main(**kwargs) -> None:
         parser.add_argument("--configuration-fqn", dest="configuration_fqn", required=True)
         parser.add_argument("--watermark-fqn", dest="watermark_fqn", required=True)
         parser.add_argument("--ingestion-group", dest="ingestion_group", required=True)
-        parser.add_argument("--wheel-uri", required=True)
+        parser.add_argument(
+            "--wheel-uri",
+            required=True,
+            help="Wheel in a volume or the workspace, or any pip requirement (e.g. watersync==0.4.0)",
+        )
         parser.add_argument("--planner-notebook-path", required=True)
         parser.add_argument("--worker-notebook-path", required=True)
         parser.add_argument("--cdc-pipeline-id", default="")
         parser.add_argument("--cdc-pipeline-file-path", default=str(Path.cwd() / "src" / "watersync" / "pipeline_bootstrap.py"))
         parser.add_argument("--foreach-concurrency", default=4, type=int)
+        parser.add_argument("--git-url", default="", help="Repository the notebooks run from; empty for workspace paths")
+        parser.add_argument("--git-branch", default="main")
+        parser.add_argument("--git-tag", default="", help="Pin the notebooks to a tag instead of the branch")
+        parser.add_argument("--git-commit", default="", help="Pin the notebooks to a commit instead of the branch")
+        parser.add_argument(
+            "--git-provider", default="", help="For a self-hosted server, e.g. gitHubEnterprise; detected otherwise"
+        )
         args = parser.parse_args()
 
     provisioner = IngestionJobProvisioner()
@@ -128,6 +139,11 @@ def create_job_main(**kwargs) -> None:
         cdc_pipeline_id=getattr(args, "cdc_pipeline_id", ""),
         cdc_pipeline_file_path=getattr(args, "cdc_pipeline_file_path", str(Path.cwd() / "src" / "watersync" / "pipeline_bootstrap.py")),
         foreach_concurrency=int(getattr(args, "foreach_concurrency", 4)),
+        git_url=getattr(args, "git_url", ""),
+        git_branch=getattr(args, "git_branch", "main"),
+        git_tag=getattr(args, "git_tag", ""),
+        git_commit=getattr(args, "git_commit", ""),
+        git_provider=getattr(args, "git_provider", ""),
     )
     print(json.dumps(provisioner.create_or_update_job(settings), default=str))
 

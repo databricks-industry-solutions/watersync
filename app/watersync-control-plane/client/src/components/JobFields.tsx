@@ -10,7 +10,9 @@ import {
 } from '@databricks/appkit-ui/react';
 import { defaultSparkVersion } from '../lib/jobCompute';
 import type { ComputeMode, NodeTypes, PerformanceTarget } from '../lib/jobCompute';
-import type { JobCompute } from '../types';
+import type { JobCompute, JobLibrary, JobNotebooks } from '../types';
+
+type GitNotebooks = Extract<JobNotebooks, { source: 'GIT' }>;
 
 // Compute and identity fields shared by the ingestion job dialog and the row check job dialog.
 
@@ -222,61 +224,218 @@ export function RunAsFields({
   );
 }
 
+// The Git hosts whose provider is detected from the URL, as on the server (server/gitSource.ts).
+const detectedHost = (url: string) => {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return (
+      ['github.com', 'dev.azure.com', 'gitlab.com', 'bitbucket.org'].includes(host) ||
+      host.endsWith('.visualstudio.com') ||
+      /^git-codecommit\.[a-z0-9-]+\.amazonaws\.com$/.test(host)
+    );
+  } catch {
+    return true; // Not a URL yet: the field's own validation says so.
+  }
+};
+const selfHostedProviders = [
+  ['gitHubEnterprise', 'GitHub Enterprise Server'],
+  ['gitLabEnterpriseEdition', 'GitLab Self-Managed'],
+  ['bitbucketServer', 'Bitbucket Data Center / Server'],
+] as const;
+const referenceLabels = { BRANCH: 'Branch', TAG: 'Tag', COMMIT: 'Commit hash' } as const;
+
+const defaultNotebooks: GitNotebooks = {
+  source: 'GIT',
+  gitUrl: 'https://github.com/databricks-industry-solutions/watersync',
+  gitProvider: null,
+  referenceType: 'BRANCH',
+  reference: 'main',
+};
+
 /**
- * Where the job's tasks install WaterSync from: the GitHub branch the notebooks come from, or a wheel in a Unity
- * Catalog volume. A volume wheel is posted as `libraryPath`; the field is absent when the branch is used.
+ * Where a job's notebooks come from and where its tasks install WaterSync from. Each choice is a select, and only
+ * the fields of the chosen option are shown; sourceFromForm (lib/jobSource.ts) reads them back.
  */
-export function LibrarySourceFields({
+export function SourceFields({
   id,
-  defaultLibraryPath,
-  gitDependency,
+  defaultNotebooks: initialNotebooks = defaultNotebooks,
+  defaultLibrary = { source: 'GIT' },
 }: {
   id: string;
-  defaultLibraryPath?: string | null;
-  /** The pip requirement installed from the branch, shown as a preview when given. */
-  gitDependency?: string;
+  defaultNotebooks?: JobNotebooks;
+  defaultLibrary?: JobLibrary;
 }) {
-  const [source, setSource] = useState(defaultLibraryPath ? 'volume' : 'git');
-  const [libraryPath, setLibraryPath] = useState(defaultLibraryPath ?? '');
+  const git = initialNotebooks.source === 'GIT' ? initialNotebooks : defaultNotebooks;
+  const [notebookSource, setNotebookSource] = useState(initialNotebooks.source);
+  const [gitUrl, setGitUrl] = useState(git.gitUrl);
+  const [gitProvider, setGitProvider] = useState(git.gitProvider ?? '');
+  const [referenceType, setReferenceType] = useState<'BRANCH' | 'TAG' | 'COMMIT'>(git.referenceType);
+  const [reference, setReference] = useState(git.reference);
+  const [basePath, setBasePath] = useState(initialNotebooks.source === 'WORKSPACE' ? initialNotebooks.basePath : '');
+  const [librarySource, setLibrarySource] = useState<JobLibrary['source']>(defaultLibrary.source);
+  const [wheelPath, setWheelPath] = useState(defaultLibrary.source === 'WHEEL' ? defaultLibrary.path : '');
+  const [requirement, setRequirement] = useState(defaultLibrary.source === 'PIP' ? defaultLibrary.requirement : '');
+  const fromGit = notebookSource === 'GIT';
+  // The Git repository is only an install option when the notebooks come from one.
+  const library = !fromGit && librarySource === 'GIT' ? 'WHEEL' : librarySource;
+  const needsProvider = fromGit && !detectedHost(gitUrl);
+  const gitRequirement = `watersync@git+${
+    /^https?:\/\/(www\.)?github\.com\//i.test(gitUrl) ? `${gitUrl.replace(/\.git$/, '')}.git` : gitUrl
+  }@${reference || 'main'}`;
   return (
     <>
+      <input type="hidden" name="notebookSource" value={notebookSource} />
+      <input type="hidden" name="librarySource" value={library} />
       <div className="space-y-2 md:col-span-2">
-        <Label htmlFor={id}>Install WaterSync from</Label>
-        <Select value={source} onValueChange={setSource}>
-          <SelectTrigger id={id} className="w-full">
+        <Label htmlFor={`${id}-notebooks`}>Notebooks from</Label>
+        <Select value={notebookSource} onValueChange={(value) => setNotebookSource(value as JobNotebooks['source'])}>
+          <SelectTrigger id={`${id}-notebooks`} className="w-full">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="git">GitHub branch</SelectItem>
-            <SelectItem value="volume">Wheel in a Unity Catalog volume</SelectItem>
+            <SelectItem value="GIT">Git repository</SelectItem>
+            <SelectItem value="WORKSPACE">Workspace folder</SelectItem>
           </SelectContent>
         </Select>
       </div>
-      {source === 'volume' && (
+      {fromGit ? (
+        <>
+          <div className="space-y-2 md:col-span-2">
+            <Label htmlFor={`${id}-git-url`}>Git repository URL</Label>
+            <Input
+              id={`${id}-git-url`}
+              name="gitUrl"
+              type="url"
+              value={gitUrl}
+              onChange={(event) => setGitUrl(event.target.value)}
+              placeholder="https://github.com/org/repo or https://dev.azure.com/org/project/_git/repo"
+              required
+            />
+            <p className="text-xs text-muted-foreground">
+              A private repository needs Git credentials for the identity the job runs as.
+            </p>
+          </div>
+          {needsProvider && (
+            <div className="space-y-2 md:col-span-2">
+              <Label htmlFor={`${id}-git-provider`}>Git provider</Label>
+              <Select value={gitProvider} onValueChange={setGitProvider}>
+                <SelectTrigger id={`${id}-git-provider`} className="w-full">
+                  <SelectValue placeholder="Choose the self-hosted Git server" />
+                </SelectTrigger>
+                <SelectContent>
+                  {selfHostedProviders.map(([value, label]) => (
+                    <SelectItem key={value} value={value}>
+                      {label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <input type="hidden" name="gitProvider" value={gitProvider} />
+            </div>
+          )}
+          <div className="space-y-2">
+            <Label htmlFor={`${id}-git-reference-type`}>Git reference</Label>
+            <Select
+              value={referenceType}
+              onValueChange={(value) => setReferenceType(value as 'BRANCH' | 'TAG' | 'COMMIT')}
+            >
+              <SelectTrigger id={`${id}-git-reference-type`} className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="BRANCH">Branch</SelectItem>
+                <SelectItem value="TAG">Tag</SelectItem>
+                <SelectItem value="COMMIT">Commit</SelectItem>
+              </SelectContent>
+            </Select>
+            <input type="hidden" name="gitReferenceType" value={referenceType} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor={`${id}-git-reference`}>{referenceLabels[referenceType]}</Label>
+            <Input
+              id={`${id}-git-reference`}
+              name="gitReference"
+              value={reference}
+              onChange={(event) => setReference(event.target.value)}
+              placeholder={referenceType === 'BRANCH' ? 'main' : referenceType === 'TAG' ? 'v0.4.0' : '0123abc'}
+              pattern={referenceType === 'COMMIT' ? '[0-9a-fA-F]{7,40}' : '[^\\s"\'`\\\\$]+'}
+              required
+            />
+          </div>
+        </>
+      ) : (
         <div className="space-y-2 md:col-span-2">
-          <Label htmlFor={`${id}-path`}>Wheel path</Label>
+          <Label htmlFor={`${id}-base-path`}>Workspace folder</Label>
           <Input
-            id={`${id}-path`}
-            name="libraryPath"
-            value={libraryPath}
-            onChange={(event) => setLibraryPath(event.target.value)}
-            pattern="\/Volumes\/[^\s]+\.whl"
-            title="A wheel file in a Unity Catalog volume, e.g. /Volumes/main/watersync/libs/watersync-0.4.0-py3-none-any.whl"
+            id={`${id}-base-path`}
+            name="notebookBasePath"
+            value={basePath}
+            onChange={(event) => setBasePath(event.target.value)}
+            placeholder="/Workspace/Users/me@example.com/.bundle/watersync/dev/files"
+            pattern={'/[^"\'`\\\\$]+'}
+            title="An absolute workspace path, without quotes or backslashes"
+            required
+          />
+          <p className="text-xs text-muted-foreground">
+            The folder that holds notebooks/ and src/: a bundle&apos;s deployed files or a Git folder.
+          </p>
+        </div>
+      )}
+      <div className="space-y-2 md:col-span-2">
+        <Label htmlFor={`${id}-library`}>Install WaterSync from</Label>
+        <Select value={library} onValueChange={(value) => setLibrarySource(value as JobLibrary['source'])}>
+          <SelectTrigger id={`${id}-library`} className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {fromGit && <SelectItem value="GIT">Git repository</SelectItem>}
+            <SelectItem value="WHEEL">Wheel file</SelectItem>
+            <SelectItem value="PIP">Pip requirement</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      {library === 'GIT' && (
+        <div className="space-y-2 md:col-span-2">
+          <div className="break-all rounded-md border bg-muted/30 p-3 font-mono text-xs">{gitRequirement}</div>
+          <p className="text-xs text-muted-foreground">
+            pip reads the repository without credentials, so this only works for a public repository. For a private one,
+            use a wheel file or a package index.
+          </p>
+        </div>
+      )}
+      {library === 'WHEEL' && (
+        <div className="space-y-2 md:col-span-2">
+          <Label htmlFor={`${id}-wheel`}>Wheel path</Label>
+          <Input
+            id={`${id}-wheel`}
+            name="libraryWheelPath"
+            value={wheelPath}
+            onChange={(event) => setWheelPath(event.target.value)}
+            pattern="\/(Volumes|Workspace)\/[^\s]+\.whl"
+            title="A wheel file in a volume or the workspace"
             placeholder="/Volumes/<catalog>/<schema>/<volume>/watersync-0.4.0-py3-none-any.whl"
             required
           />
           <p className="text-xs text-muted-foreground">
-            Installed on every task instead of the package from GitHub; the notebooks still run from the branch, so use
-            a wheel built from it.
+            A wheel in a Unity Catalog volume, or in the workspace, where a bundle deploys the one it builds. Use a
+            wheel built from the same version as the notebooks.
           </p>
         </div>
       )}
-      {source === 'git' && gitDependency && (
+      {library === 'PIP' && (
         <div className="space-y-2 md:col-span-2">
-          <Label>Task library</Label>
-          <div className="break-all rounded-md border bg-muted/30 p-3 font-mono text-xs">{gitDependency}</div>
+          <Label htmlFor={`${id}-requirement`}>Pip requirement</Label>
+          <Input
+            id={`${id}-requirement`}
+            name="libraryRequirement"
+            value={requirement}
+            onChange={(event) => setRequirement(event.target.value)}
+            placeholder="watersync==0.4.0"
+            required
+          />
           <p className="text-xs text-muted-foreground">
-            Installed on the planner and every ingestion worker task from the selected branch.
+            A package from PyPI or the workspace&apos;s default package repository (such as an Azure Artifacts feed), or
+            a wheel URL.
           </p>
         </div>
       )}

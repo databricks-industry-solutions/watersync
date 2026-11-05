@@ -9,13 +9,21 @@ import type {
   Schedule,
 } from './schemas.js';
 import { allResponseRows, execute, tableName, workspace, workspaceBaseUrl } from './sql.js';
-import { watersyncDependency } from './pipelines.js';
 import { logger } from './logging.js';
+import {
+  gitSource,
+  notebookTask,
+  readLibrary,
+  readNotebooks,
+  watersyncRequirement,
+  type Library,
+  type Notebooks,
+} from './jobSource.js';
 import {
   findLocationJob,
   jobCompute,
   readJobCompute,
-  readLibraryPath,
+  readRequirement,
   runAsIdentity,
   runAsTarget,
   upsertJob,
@@ -53,9 +61,8 @@ type RowCheckJobOptions = {
   schema: string;
   name: string;
   description: string;
-  gitUrl: string;
-  gitBranch: string;
-  libraryPath?: string | null;
+  notebooks: Notebooks;
+  library: Library;
   compute: JobCompute;
   runAs: RunAsTarget;
   maxParallelTables: number;
@@ -68,10 +75,7 @@ type RowCheckJobOptions = {
 
 /** The settings of a row check job, whatever its scope and mode. */
 function rowCheckJobSettings(options: RowCheckJobOptions): jobs.JobSettings {
-  const compute = jobCompute(
-    options.compute,
-    watersyncDependency(options.gitUrl, options.gitBranch, options.libraryPath)
-  );
+  const compute = jobCompute(options.compute, watersyncRequirement(options.notebooks, options.library));
   const runAs = toRunAs(options.runAs);
   return {
     name: options.name,
@@ -98,13 +102,13 @@ function rowCheckJobSettings(options: RowCheckJobOptions): jobs.JobSettings {
         task_key: taskKey,
         ...compute.task,
         notebook_task: {
-          notebook_path: rowCheckNotebookPath,
-          source: 'GIT',
+          ...notebookTask(options.notebooks, rowCheckNotebookPath),
           base_parameters: { job_run_id: '{{job.run_id}}' },
         },
       },
     ],
-    git_source: { git_url: options.gitUrl, git_provider: 'gitHub', git_branch: options.gitBranch },
+    // Notebooks in the workspace need no git_source.
+    ...(gitSource(options.notebooks) ? { git_source: gitSource(options.notebooks) } : {}),
     ...(options.schedule.enabled
       ? {
           schedule: {
@@ -175,9 +179,12 @@ function settingsOf(job: jobs.Job, ingestionGroup: string, checkMode: RowCheckMo
     ingestionGroup,
     checkMode,
     rangeFrom: checkMode === 'detailed' ? parameterDefault(job, 'range_from') : '',
-    gitUrl: settings?.git_source?.git_url ?? '',
-    gitBranch: settings?.git_source?.git_branch ?? 'main',
-    libraryPath: readLibraryPath(settings),
+    notebooks: readNotebooks(
+      settings,
+      settings?.tasks?.find((task) => task.task_key === taskKey)?.notebook_task,
+      rowCheckNotebookPath
+    ),
+    library: readLibrary(readRequirement(settings)),
     maxParallelTables: Number(parameterDefault(job, 'max_parallel_tables')) || 4,
     schedule: settings?.schedule
       ? {

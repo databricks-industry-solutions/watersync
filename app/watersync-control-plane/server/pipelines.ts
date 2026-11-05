@@ -8,13 +8,6 @@ export const plannerNotebookPath = 'notebooks/Task - Plan Configs';
 export const workerNotebookPath = 'notebooks/Task - Run Ingestion';
 export const selectiveRefreshNotebookPath = 'src/watersync/utils/selective_pipeline_refresh';
 
-/**
- * The pip requirement every task and the CDC pipeline install: a wheel in a Unity Catalog volume when one is
- * given, otherwise the package from the job's GitHub branch.
- */
-export const watersyncDependency = (gitUrl: string, gitBranch: string, libraryPath?: string | null) =>
-  libraryPath || `watersync@git+${gitUrl.replace(/\.git$/, '')}.git@${gitBranch}`;
-
 export async function groupNeedsCdcPipeline(catalog: string, schema: string, ingestionGroup: string) {
   const response = await execute(
     `SELECT count_if(coalesce(enabled, true) AND (
@@ -46,9 +39,8 @@ export async function ensureCdcPipeline(opts: {
   catalog: string;
   schema: string;
   ingestionGroup: string;
-  gitUrl: string;
-  gitBranch: string;
-  libraryPath?: string | null;
+  // The pip requirement the pipeline installs WaterSync with, the same as the job's tasks.
+  dependency: string;
   compute: PipelineCompute;
   runAs?: pipelines.RunAs;
 }) {
@@ -67,7 +59,7 @@ export async function ensureCdcPipeline(opts: {
   const genDir = '/Shared/watersync-generated-pipelines';
   const bootstrapPath = `${genDir}/cdc_pipeline_bootstrap.py`;
   await workspace.workspace.mkdirs({ path: genDir });
-  const dependency = watersyncDependency(opts.gitUrl, opts.gitBranch, opts.libraryPath);
+  const { dependency } = opts;
   let library: pipelines.PipelineLibrary;
   if (opts.compute.mode === 'CLASSIC') {
     // One notebook per group, because the %pip line carries the group's package source.

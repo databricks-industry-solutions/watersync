@@ -150,7 +150,7 @@ describe('row check jobs', () => {
     ]);
     expect(listedJobs[1]).toMatchObject({
       jobId: 10,
-      gitBranch: 'main',
+      notebooks: { source: 'GIT', referenceType: 'BRANCH', reference: 'main' },
       maxParallelTables: 6,
       rangeFrom: '-7d',
       schedule: { enabled: true, quartzCronExpression: '0 0 6 * * ?' },
@@ -235,10 +235,10 @@ describe('row check jobs', () => {
   });
 
   it('installs a wheel from a volume on serverless and job clusters, and reads it back', async () => {
-    const wheel = '/Volumes/main/watersync/libs/watersync-0.4.0-py3-none-any.whl';
-    await saveRowCheckJob(payload({ libraryPath: wheel }));
-    expect(state.jobs.get(9)?.environments?.[0]?.spec?.dependencies).toEqual([wheel]);
-    expect((await listRowCheckJobs('dev', 'watersync'))[0]).toMatchObject({ libraryPath: wheel });
+    const library = { source: 'WHEEL', path: '/Volumes/main/watersync/libs/watersync-0.4.0-py3-none-any.whl' };
+    await saveRowCheckJob(payload({ library }));
+    expect(state.jobs.get(9)?.environments?.[0]?.spec?.dependencies).toEqual([library.path]);
+    expect((await listRowCheckJobs('dev', 'watersync'))[0]).toMatchObject({ library });
 
     const compute = {
       mode: 'JOB_CLUSTER',
@@ -249,9 +249,31 @@ describe('row check jobs', () => {
       minWorkers: 1,
       maxWorkers: 2,
     };
-    await saveRowCheckJob(payload({ libraryPath: wheel, compute }));
-    expect(state.jobs.get(9)?.tasks?.[0]?.libraries).toEqual([{ whl: wheel }]);
-    expect((await listRowCheckJobs('dev', 'watersync'))[0]).toMatchObject({ libraryPath: wheel, compute });
+    await saveRowCheckJob(payload({ library, compute }));
+    expect(state.jobs.get(9)?.tasks?.[0]?.libraries).toEqual([{ whl: library.path }]);
+    expect((await listRowCheckJobs('dev', 'watersync'))[0]).toMatchObject({ library, compute });
+  });
+
+  it('runs from a workspace folder or from Azure DevOps, and reads either back', async () => {
+    const notebooks = { source: 'WORKSPACE', basePath: '/Workspace/Users/me/watersync' };
+    const library = { source: 'PIP', requirement: 'watersync==0.4.0' };
+    await saveRowCheckJob(payload({ notebooks, library }));
+    const job = state.jobs.get(9);
+    expect(job?.git_source).toBeUndefined();
+    expect(job?.tasks?.[0]?.notebook_task).toMatchObject({
+      notebook_path: '/Workspace/Users/me/watersync/notebooks/Task - Row Check',
+      source: 'WORKSPACE',
+    });
+    expect((await listRowCheckJobs('dev', 'watersync'))[0]).toMatchObject({ notebooks, library });
+
+    const gitUrl = 'https://dev.azure.com/org/project/_git/watersync';
+    await saveRowCheckJob(payload({ notebooks: { source: 'GIT', gitUrl, referenceType: 'TAG', reference: 'v0.4.0' } }));
+    expect(state.jobs.get(9)?.git_source).toEqual({
+      git_url: gitUrl,
+      git_provider: 'azureDevOpsServices',
+      git_tag: 'v0.4.0',
+    });
+    expect(state.jobs.get(9)?.environments?.[0]?.spec?.dependencies).toEqual([`watersync@git+${gitUrl}@v0.4.0`]);
   });
 
   it('rejects a job cluster without node types, and a range start it cannot read', () => {

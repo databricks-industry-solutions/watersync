@@ -286,9 +286,16 @@
   "jobs": [
     {
       "ingestionGroup": "clarity_csa",
-      "gitUrl": "https://github.com/databricks-industry-solutions/watersync",
-      "gitBranch": "main",
-      "libraryPath": null,
+      "notebooks": {
+        "source": "GIT",
+        "gitUrl": "https://github.com/databricks-industry-solutions/watersync",
+        "gitProvider": null,
+        "referenceType": "BRANCH",
+        "reference": "main"
+      },
+      "library": {
+        "source": "GIT"
+      },
       "foreachConcurrency": 4,
       "cdcPipelineId": null,
       "schedule": {
@@ -315,15 +322,29 @@
         "photon": false
       },
       "runAs": {
-        "job": { "mode": "DEFAULT", "principal": "" },
-        "pipeline": { "mode": "SAME_AS_JOB", "principal": "" }
+        "job": {
+          "mode": "DEFAULT",
+          "principal": ""
+        },
+        "pipeline": {
+          "mode": "SAME_AS_JOB",
+          "principal": ""
+        }
       }
     },
     {
       "ingestionGroup": "clarity_sp",
-      "gitUrl": "https://github.com/databricks-industry-solutions/watersync",
-      "gitBranch": "main",
-      "libraryPath": "/Volumes/hls/watersync/libs/watersync-0.4.0-py3-none-any.whl",
+      "notebooks": {
+        "source": "GIT",
+        "gitUrl": "https://dev.azure.com/example-org/clarity/_git/watersync",
+        "gitProvider": null,
+        "referenceType": "BRANCH",
+        "reference": "main"
+      },
+      "library": {
+        "source": "WHEEL",
+        "path": "/Volumes/hls/watersync/libs/watersync-0.4.0-py3-none-any.whl"
+      },
       "foreachConcurrency": 4,
       "cdcPipelineId": null,
       "schedule": {
@@ -354,14 +375,22 @@
           "mode": "SERVICE_PRINCIPAL",
           "principal": "00000000-0000-0000-0000-000000000000"
         },
-        "pipeline": { "mode": "SAME_AS_JOB", "principal": "" }
+        "pipeline": {
+          "mode": "SAME_AS_JOB",
+          "principal": ""
+        }
       }
     },
     {
       "ingestionGroup": "clarity_reference",
-      "gitUrl": "https://github.com/databricks-industry-solutions/watersync",
-      "gitBranch": "main",
-      "libraryPath": "/Volumes/hls/watersync/libs/watersync-0.4.0-py3-none-any.whl",
+      "notebooks": {
+        "source": "WORKSPACE",
+        "basePath": "/Workspace/Users/data.engineer@example.org/.bundle/watersync/prod/files"
+      },
+      "library": {
+        "source": "WHEEL",
+        "path": "/Workspace/Users/data.engineer@example.org/.bundle/watersync/prod/artifacts/.internal/watersync-0.4.0-py3-none-any.whl"
+      },
       "foreachConcurrency": 2,
       "cdcPipelineId": null,
       "schedule": {
@@ -388,15 +417,29 @@
         "photon": false
       },
       "runAs": {
-        "job": { "mode": "DEFAULT", "principal": "" },
-        "pipeline": { "mode": "SAME_AS_JOB", "principal": "" }
+        "job": {
+          "mode": "DEFAULT",
+          "principal": ""
+        },
+        "pipeline": {
+          "mode": "SAME_AS_JOB",
+          "principal": ""
+        }
       }
     },
     {
       "ingestionGroup": "finance",
-      "gitUrl": "https://github.com/databricks-industry-solutions/watersync",
-      "gitBranch": "main",
-      "libraryPath": null,
+      "notebooks": {
+        "source": "GIT",
+        "gitUrl": "https://github.com/databricks-industry-solutions/watersync",
+        "gitProvider": null,
+        "referenceType": "TAG",
+        "reference": "v0.4.0"
+      },
+      "library": {
+        "source": "PIP",
+        "requirement": "watersync==0.4.0"
+      },
       "foreachConcurrency": 4,
       "cdcPipelineId": null,
       "schedule": {
@@ -423,8 +466,14 @@
         "photon": false
       },
       "runAs": {
-        "job": { "mode": "USER", "principal": "data.engineer@example.org" },
-        "pipeline": { "mode": "SAME_AS_JOB", "principal": "" }
+        "job": {
+          "mode": "USER",
+          "principal": "data.engineer@example.org"
+        },
+        "pipeline": {
+          "mode": "SAME_AS_JOB",
+          "principal": ""
+        }
       }
     }
   ],
@@ -433,9 +482,16 @@
       "ingestionGroup": "",
       "checkMode": "basic",
       "rangeFrom": "",
-      "gitUrl": "https://github.com/databricks-industry-solutions/watersync",
-      "gitBranch": "main",
-      "libraryPath": null,
+      "notebooks": {
+        "source": "GIT",
+        "gitUrl": "https://github.com/databricks-industry-solutions/watersync",
+        "gitProvider": null,
+        "referenceType": "BRANCH",
+        "reference": "main"
+      },
+      "library": {
+        "source": "GIT"
+      },
       "maxParallelTables": 8,
       "schedule": {
         "enabled": true,
@@ -452,15 +508,25 @@
         "minWorkers": 1,
         "maxWorkers": 4
       },
-      "runAs": { "mode": "DEFAULT", "principal": "" }
+      "runAs": {
+        "mode": "DEFAULT",
+        "principal": ""
+      }
     },
     {
       "ingestionGroup": "clarity_csa",
       "checkMode": "detailed",
       "rangeFrom": "-7d",
-      "gitUrl": "https://github.com/databricks-industry-solutions/watersync",
-      "gitBranch": "main",
-      "libraryPath": null,
+      "notebooks": {
+        "source": "GIT",
+        "gitUrl": "https://github.com/databricks-industry-solutions/watersync",
+        "gitProvider": null,
+        "referenceType": "BRANCH",
+        "reference": "main"
+      },
+      "library": {
+        "source": "GIT"
+      },
       "maxParallelTables": 4,
       "schedule": {
         "enabled": true,
@@ -477,15 +543,23 @@
         "minWorkers": 1,
         "maxWorkers": 4
       },
-      "runAs": { "mode": "DEFAULT", "principal": "" }
+      "runAs": {
+        "mode": "DEFAULT",
+        "principal": ""
+      }
     },
     {
       "ingestionGroup": "clarity_reference",
       "checkMode": "detailed",
       "rangeFrom": "",
-      "gitUrl": "https://github.com/databricks-industry-solutions/watersync",
-      "gitBranch": "main",
-      "libraryPath": "/Volumes/hls/watersync/libs/watersync-0.4.0-py3-none-any.whl",
+      "notebooks": {
+        "source": "WORKSPACE",
+        "basePath": "/Workspace/Users/data.engineer@example.org/.bundle/watersync/prod/files"
+      },
+      "library": {
+        "source": "WHEEL",
+        "path": "/Workspace/Users/data.engineer@example.org/.bundle/watersync/prod/artifacts/.internal/watersync-0.4.0-py3-none-any.whl"
+      },
       "maxParallelTables": 2,
       "schedule": {
         "enabled": true,
@@ -502,7 +576,10 @@
         "minWorkers": 1,
         "maxWorkers": 2
       },
-      "runAs": { "mode": "DEFAULT", "principal": "" }
+      "runAs": {
+        "mode": "DEFAULT",
+        "principal": ""
+      }
     }
   ]
 }

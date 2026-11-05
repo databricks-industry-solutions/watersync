@@ -55,16 +55,31 @@ The **Jobs** dialog builds one job per ingestion group, named `[<group>] Ingesti
 | Tab | Settings |
 | --- | --- |
 | **Job configuration** | The ingestion group; shows the generated job parameters |
-| **Git source & execution** | GitHub repository and branch, where to install WaterSync from (the branch, or a wheel in a Unity Catalog volume), parallel tables (`foreach_concurrency`, 1–100), and optionally an existing SDP pipeline ID to reuse |
+| **Source & execution** | Where the notebooks come from and where WaterSync is installed from (see [below](#notebooks-and-package)), parallel tables (`foreach_concurrency`, 1–100), and optionally an existing SDP pipeline ID to reuse |
 | **Job Compute** | **Serverless** (default) with a performance mode (`STANDARD` or `PERFORMANCE_OPTIMIZED`), or a **shared autoscaling job cluster** (Databricks Runtime, driver and worker node types, min/max workers) used by the planner and every worker |
 | **SDP Compute** | Shown when the group has a CDC pipeline: **Serverless** (default), sharing the job's performance mode, or a **classic autoscaling cluster** (node types, min/max workers, Photon) |
 | **Schedule** | Quartz cron expression, time zone, active or paused; or manual runs only |
 | **Run as** | The job runs as its owner (the app service principal, default), a user, or a service principal. The SDP pipeline follows the job (default) or uses its own identity |
 
-- Jobs run the notebooks from the GitHub repository and, by default, install the package from the same branch (`watersync@git+<git_url>.git@<git_branch>`). The branch must not contain whitespace, quotes or backslashes, because it ends up in the pip requirement.
-- To install a wheel instead, pick **Wheel in a Unity Catalog volume** and enter its path, such as `/Volumes/main/watersync/libs/watersync-0.4.0-py3-none-any.whl`. Every task installs it, on serverless and on job clusters, and so does the group's generated SDP pipeline. Use a wheel built from the branch the notebooks run from.
 - Node type fields are prefilled with the smallest general-purpose node type with at least 4 cores (`GET /api/node-types`). Other node types are offered as suggestions.
 - If a required field is missing on a tab you are not viewing, the dialog switches to that tab and names the field.
+
+### Notebooks and package
+
+A job needs two things from WaterSync: the task **notebooks** it runs, and the **package** its tasks and the group's SDP pipeline install. On the **Source & execution** tab each is a choice, and only the fields of the chosen option are shown. The [row check job](Row-Checks#row-check-jobs) dialog has the same choices.
+
+| Notebooks from | Fields | Notes |
+| --- | --- | --- |
+| **Git repository** | URL, and a branch, a tag or a commit | GitHub, Azure DevOps (`dev.azure.com`), GitLab, Bitbucket Cloud and AWS CodeCommit are recognised from the URL; for a self-hosted server (GitHub Enterprise Server, GitLab Self-Managed, Bitbucket Data Center), choose its provider. A user name in the URL, such as the `org@` of Azure DevOps clone URLs, is dropped. A private repository needs Git credentials for the identity the job runs as. A tag or a commit pins the run to that version |
+| **Workspace folder** | The folder that holds `notebooks/` and `src/` | A bundle's deployed files (`.../.bundle/<name>/<target>/files`) or a Git folder. The job has no Git source, so no Git credentials are needed |
+
+| Install WaterSync from | Fields | Notes |
+| --- | --- | --- |
+| **Git repository** | — | The package from the notebooks' repository and reference, for example `watersync@git+<url>.git@<branch>`. pip reads it without credentials, so it only works for a public repository. Not offered for workspace notebooks |
+| **Wheel file** | Path | A wheel in a Unity Catalog volume, or in the workspace, where a bundle deploys the one it builds. Use a wheel built from the same version as the notebooks |
+| **Pip requirement** | Requirement | For example `watersync==0.4.0` from PyPI or the workspace's default package repository (such as an Azure Artifacts feed, set up by an admin), or a wheel URL |
+
+Serverless tasks and the SDP pipeline install the package through their environment; job cluster tasks install it as a library (`whl` for a wheel, `pypi` otherwise). Git references, paths and requirements must not contain quotes or backslashes, because they end up in a pip requirement.
 - The CDC pipeline is named `[<group>] CDC SCD2 Pipeline` and is created or updated with the job. Serverless pipelines install the package through the pipeline environment. Classic pipelines run on the **Advanced** edition (Auto CDC needs at least Pro) and use a per-group notebook in `/Shared/watersync-generated-pipelines` that installs the package with `%pip`.
 - Databricks keeps one serverless performance mode per job, and it covers the SDP pipeline task too, so the job and its pipeline always run with the same mode. The dialog lets you edit it in one place: on **Job Compute** when the job is serverless (**SDP Compute** then shows it read-only, with a button to go there), otherwise on **SDP Compute** when only the pipeline is serverless. It is sent whenever the job compute or the SDP pipeline is serverless.
 - Running as a user requires the app service principal to be a workspace admin. Running as another service principal requires it to have the Service Principal User role on that principal. The SDP run-as setting is ignored when you reuse an existing pipeline by ID.

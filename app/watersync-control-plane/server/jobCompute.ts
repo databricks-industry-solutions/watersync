@@ -1,13 +1,11 @@
 import type { jobs } from '@databricks/sdk-experimental';
 import type { JobCompute } from './schemas.js';
+import { isWheelFile } from './jobSource.js';
 import { workspace } from './sql.js';
 
 // Shared by the ingestion jobs and the row check job, so both offer and read back the same compute and identity.
 export const environmentKey = 'watersync_environment';
 export const jobClusterKey = 'watersync_cluster';
-
-// A dependency that is a file in a Unity Catalog volume: a wheel, rather than a pip requirement.
-const volumePath = (dependency: string) => dependency.startsWith('/Volumes/');
 
 /**
  * What a job needs for the chosen compute: `task` goes on every task, `settings` on the job. Serverless tasks
@@ -27,7 +25,7 @@ export function jobCompute(compute: JobCompute, dependency: string) {
   return {
     task: {
       job_cluster_key: jobClusterKey,
-      libraries: [volumePath(dependency) ? { whl: dependency } : { pypi: { package: dependency } }],
+      libraries: [isWheelFile(dependency) ? { whl: dependency } : { pypi: { package: dependency } }],
     },
     settings: {
       job_clusters: [
@@ -45,13 +43,11 @@ export function jobCompute(compute: JobCompute, dependency: string) {
   };
 }
 
-/** The volume wheel a job installs WaterSync from, or null when it installs the package from GitHub. */
-export function readLibraryPath(settings: jobs.JobSettings | undefined): string | null {
-  const dependencies = [
-    ...(settings?.environments?.find((item) => item.environment_key === environmentKey)?.spec?.dependencies ?? []),
-    ...(settings?.tasks ?? []).flatMap((task) => (task.libraries ?? []).map((library) => library.whl ?? '')),
-  ];
-  return dependencies.find(volumePath) ?? null;
+/** The requirement a job's tasks install WaterSync with: its environment dependency, or a task library. */
+export function readRequirement(settings: jobs.JobSettings | undefined): string | undefined {
+  const environment = settings?.environments?.find((item) => item.environment_key === environmentKey);
+  const library = settings?.tasks?.find((task) => task.libraries?.length)?.libraries?.[0];
+  return environment?.spec?.dependencies?.[0] ?? library?.whl ?? library?.pypi?.package;
 }
 
 /** The compute a job was generated with, read back from its settings. */

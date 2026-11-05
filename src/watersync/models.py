@@ -125,5 +125,10 @@ class JobProvisioningSettings:
     cdc_pipeline_id: str = ""
     cdc_pipeline_file_path: str = ""
     use_serverless: bool = True
+    # Notebooks from a Git repository at a branch, tag or commit; an empty git_url means workspace notebook paths.
     git_url: str = ""
     git_branch: str = "main"
+    git_tag: str = ""
+    git_commit: str = ""
+    # Detected from git_url when empty; needed for self-hosted servers (e.g. gitHubEnterprise).
+    git_provider: str = ""

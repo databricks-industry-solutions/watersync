@@ -67,8 +67,8 @@ test('jobs screen exposes the guided creation form', async ({ page }) => {
   await expect(page.getByRole('tab', { name: 'Job configuration' })).toBeVisible();
   await expect(page.getByRole('tab', { name: 'Schedule' })).toBeVisible();
   await expect(page.getByRole('tab', { name: 'Compute' })).toBeVisible();
-  await page.getByRole('tab', { name: 'Git source & execution' }).click();
-  await expect(page.getByLabel('GitHub repository URL')).toBeVisible();
+  await page.getByRole('tab', { name: 'Source & execution' }).click();
+  await expect(page.getByLabel('Git repository URL')).toBeVisible();
   await expect(page.getByLabel('Branch')).toBeVisible();
   await expect(
     page.getByText('watersync@git+https://github.com/databricks-industry-solutions/watersync.git@main')
@@ -83,6 +83,29 @@ test('jobs screen exposes run monitoring and workspace navigation', async ({ pag
   if (await runs.isVisible()) {
     await expect(page.getByRole('link', { name: 'Open in Databricks' }).first()).toBeVisible();
   }
+});
+
+test('job dialog shows only the fields of the chosen notebook and library source', async ({ page }) => {
+  await page.goto('/jobs');
+  await page.getByRole('button', { name: 'Create job' }).click();
+  await page.getByRole('tab', { name: 'Source & execution' }).click();
+  // A tag pins the run; the reference field follows the chosen type.
+  await page.getByLabel('Git reference').click();
+  await page.getByRole('option', { name: 'Tag' }).click();
+  await expect(page.getByLabel('Tag', { exact: true })).toBeVisible();
+  // A self-hosted server asks for its provider.
+  await page.getByLabel('Git repository URL').fill('https://git.example.org/data/watersync');
+  await expect(page.getByLabel('Git provider')).toBeVisible();
+  // Notebooks in the workspace: no Git fields, and no install from Git.
+  await page.getByLabel('Notebooks from').click();
+  await page.getByRole('option', { name: 'Workspace folder' }).click();
+  await expect(page.getByLabel('Workspace folder')).toBeVisible();
+  await expect(page.getByLabel('Git repository URL')).toHaveCount(0);
+  await expect(page.getByLabel('Wheel path')).toBeVisible();
+  await page.getByLabel('Install WaterSync from').click();
+  await expect(page.getByRole('option', { name: 'Git repository' })).toHaveCount(0);
+  await page.getByRole('option', { name: 'Pip requirement' }).click();
+  await expect(page.getByLabel('Pip requirement')).toBeVisible();
 });
 
 test('configuration editor offers the EPIC stored procedure with EPIC CSA mode', async ({ page }) => {
