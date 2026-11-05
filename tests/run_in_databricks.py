@@ -6,13 +6,12 @@
 # MAGIC %md
 # MAGIC # WaterSync smoke test
 # MAGIC
-# MAGIC Installs the `watersync` package from this bundle and runs the unit tests in `tests/`.
+# MAGIC Runs the unit tests in `tests/` against the `watersync` wheel the bundle built, which the job's environment installs.
 # MAGIC Deployed as the `demo_workflow` job and run by the repository CI.
 
 # COMMAND ----------
 
 # MAGIC %pip install --quiet --require-hashes --no-deps -r requirements.txt
-# MAGIC %pip install --quiet --no-deps ..
 
 # COMMAND ----------
 

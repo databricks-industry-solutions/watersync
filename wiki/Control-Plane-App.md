@@ -38,13 +38,14 @@ Lists are paged on the SQL warehouse too: choose **10, 50 or 100 rows per page**
 
 ## Deploying
 
-Deploy the app with the bundle in the repo root:
+Deploy the app with the bundle in the repo root, then start it:
 
 ```bash
-databricks bundle deploy -t dev
+databricks bundle deploy -t dev-app            # or -t prod-app
+databricks bundle run watersync_control_plane -t dev-app
 ```
 
-The app uses the SQL warehouse named `Shared Unity Catalog Serverless`. Pass `--var warehouse_id=<sql-warehouse-id>` to use another one. You can also deploy from the Databricks UI: clone the repo into your workspace, open the Asset Bundle editor, and click **Deploy**.
+The `-app` targets deploy the code as well; the `dev` and `prod` targets deploy only the code (see [Bundle Deployment](Bundle-Deployment)). The app uses the SQL warehouse named `Shared Unity Catalog Serverless`. Pass `--var warehouse_id=<sql-warehouse-id>` to use another one. You can also deploy from the Databricks UI: clone the repo into your workspace, open the Asset Bundle editor, and click **Deploy**.
 
 The app runs as its own service principal. That principal needs write access to the metadata schemas, permission to create jobs and pipelines, and access to the UC connections and secret scopes the configs reference.
 

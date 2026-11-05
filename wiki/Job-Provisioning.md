@@ -1,6 +1,6 @@
 # Job Provisioning
 
-The Control Plane app's **Jobs** page is the recommended way to create jobs: it also configures job and SDP compute, the schedule and run-as identities (see [Jobs created by the app](Control-Plane-App#jobs-created-by-the-app)), and its settings can be exported and imported with the rest of the configuration. From Python:
+To create jobs without the app, from a configuration file, use `watersync-import --deploy-jobs` (see [Bundle Deployment](Bundle-Deployment)): it builds the same jobs as the app, with compute, schedule, run-as identity and row check jobs. The Control Plane app's **Jobs** page is the recommended way to create jobs interactively: it also configures job and SDP compute, the schedule and run-as identities (see [Jobs created by the app](Control-Plane-App#jobs-created-by-the-app)), and its settings can be exported and imported with the rest of the configuration. From Python:
 
 ```python
 from watersync.models import JobProvisioningSettings

@@ -21,6 +21,9 @@ There are two ways to run it, with identical behavior:
 
 The script calls the deployed app, so validation, the config write, and job creation all run the same code.
 
+To import without the app at all, `watersync-import` reads the same file and writes the configs and jobs directly,
+through a SQL warehouse and the Databricks API. See [Bundle Deployment](Bundle-Deployment).
+
 ---
 
 ## What the file contains

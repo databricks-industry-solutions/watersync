@@ -10,6 +10,7 @@
 - [Control Plane App](Control-Plane-App)
 - [Row Checks](Row-Checks)
 - [Import and Export](Import-and-Export)
+- [Bundle Deployment](Bundle-Deployment)
 - [Job Provisioning](Job-Provisioning)
 - [Lakebase Test Setup](Lakebase-Test-Setup)
 

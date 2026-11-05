@@ -23,6 +23,7 @@ watersync-plan-configs = "watersync.cli:plan_configs_main"
 watersync-run-ingestion = "watersync.cli:run_ingestion_main"
 watersync-row-check = "watersync.cli:row_check_main"
 watersync-create-job = "watersync.cli:create_job_main"
+watersync-import = "watersync.cli:import_config_main"
 watersync-setup-lakebase = "watersync.cli:setup_lakebase_main"
 watersync-setup-uc = "watersync.cli:setup_uc_main"
 

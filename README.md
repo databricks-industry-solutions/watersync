@@ -24,7 +24,8 @@ jdbc_ingestion_config ──► planner ──► one worker per table ──►
 1. **Deploy the Control Plane app** with the bundle in the repo root:
 
    ```bash
-   databricks bundle deploy -t dev
+   databricks bundle deploy -t dev-app
+   databricks bundle run watersync_control_plane -t dev-app
    ```
 
    The app uses the SQL warehouse named `Shared Unity Catalog Serverless`; pass `--var warehouse_id=<sql-warehouse-id>` to use another one.
@@ -33,7 +34,7 @@ jdbc_ingestion_config ──► planner ──► one worker per table ──►
 3. **Add sources** on the **Configuration** page: discover tables over a UC connection or a JDBC URL, or add rows by hand.
 4. **Create the job** on the **Jobs** page: Git source, job and SDP compute, schedule and run-as identity. Then run it.
 
-Prefer code? Install the package (`%pip install -e /Workspace/Users/<user>/watersync`), run `watersync-setup-uc --catalog main --schema watersync`, and see [Installation and Setup](wiki/Installation-and-Setup.md).
+No app? Deploy the code with `databricks bundle deploy -t dev` and load a configuration file with `watersync-import`; see [Bundle Deployment](wiki/Bundle-Deployment.md). Prefer code? Install the package (`%pip install -e /Workspace/Users/<user>/watersync`), run `watersync-setup-uc --catalog main --schema watersync`, and see [Installation and Setup](wiki/Installation-and-Setup.md).
 
 ## Promoting a configuration between environments
 
