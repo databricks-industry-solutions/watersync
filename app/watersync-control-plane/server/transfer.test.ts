@@ -90,6 +90,8 @@ describe('validateImport', () => {
             config({ ...csa, sourceTableName: 'a', epicChangeProcedure: 'x; DROP TABLE y' }),
             config({ ...csa, sourceTableName: 'b', epicChangeColumnNames: "A'--" }),
             config({ ...csa, sourceTableName: 'c', epicChangeMethod: 'cdc' }),
+            config({ ...csa, sourceTableName: 'dbo.T; DROP TABLE x' }),
+            config({ ...csa, sourceTableName: 'dbo.e', keyColumns: 'ID) AND 1=1; EXEC x; SELECT (ID' }),
           ],
           jobs: [],
         },
@@ -103,6 +105,8 @@ describe('validateImport', () => {
       'file.configs.1.epicChangeProcedure',
       'file.configs.2.epicChangeColumnNames',
       'file.configs.3.epicChangeMethod',
+      'file.configs.4.sourceTableName',
+      'file.configs.5.keyColumns',
     ]);
   });
 

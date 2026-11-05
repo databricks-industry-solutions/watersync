@@ -120,6 +120,26 @@ class ValidationTest(unittest.TestCase):
         self.assertEqual(validated.jobs[0]["compute"]["performanceTarget"], "PERFORMANCE_OPTIMIZED")
         self.assertEqual(validated.row_check_jobs[0]["compute"]["performanceTarget"], "PERFORMANCE_OPTIMIZED")
 
+    def test_rejects_values_that_could_inject_code_or_sql(self) -> None:
+        file = copy.deepcopy(SAMPLE)
+        jobs = file["jobs"]
+        jobs[0]["notebooks"]["gitUrl"] = "https://github.com/org/watersync\nimport os; os.system('id')\n#"
+        jobs[1]["notebooks"] = {**jobs[1]["notebooks"], "source": "GIT"}
+        jobs[1]["notebooks"]["gitUrl"] = 'https://github.com/org/watersync"; import os #'
+        jobs[2]["library"] = {"source": "PIP", "requirement": "watersync --extra-index-url https://example.org/simple"}
+        jobs[3]["library"] = {"source": "PIP", "requirement": "-r https://example.org/requirements.txt"}
+        sp = next(i for i, c in enumerate(file["configs"]) if c.get("epicChangeMethod") == "stored_procedure")
+        file["configs"][sp]["sourceTableName"] = "dbo.PAT_ENC; DROP TABLE x"
+        found = issues_of(file)
+        for path in ("jobs.0.notebooks.gitUrl", "jobs.1.notebooks.gitUrl", "jobs.2.library.requirement",
+                     "jobs.3.library.requirement", f"configs.{sp}.sourceTableName"):
+            self.assertIn(path, found)
+
+    def test_catalog_and_schema_must_be_plain_names(self) -> None:
+        validated = validate_file(SAMPLE)
+        with self.assertRaises(ValueError):
+            import_configuration(FakeWorkspace(), "wh", "dev`; DROP TABLE x; --", "watersync", validated, log=lambda _: None)
+
     def test_git_install_needs_git_notebooks(self) -> None:
         file = copy.deepcopy(SAMPLE)
         file["jobs"][0]["notebooks"] = {"source": "WORKSPACE", "basePath": "/Workspace/x"}

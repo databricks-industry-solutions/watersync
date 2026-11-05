@@ -65,6 +65,8 @@ SET epic_change_method = 'stored_procedure',
 WHERE ingestion_group = 'epic' AND source_table_name = 'dbo.PAT_ENC';
 ```
 
+With the stored procedure, `source_table_name` must be a plain name (`schema.table` or `database.schema.table`, without brackets or quotes) and `key_columns` comma-separated column names. The ingestion job rejects other values.
+
 On an existing config table, selecting its location in the Control Plane app adds the columns; otherwise run `UnityCatalogSetup.create_config_table()` (or the notebook's `setup_uc` action) first.
 
 ## JDBC Connection Options

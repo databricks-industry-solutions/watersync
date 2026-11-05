@@ -254,6 +254,21 @@ class ConfigValidationTest(unittest.TestCase):
             validate_epic_change_method(replace(CONFIG, epic_change_column_names="A; DROP TABLE x"))
         validate_epic_change_method(replace(CONFIG, epic_change_column_names="HSP_ACCOUNT_ID,INPATIENT_DATA_ID"))
 
+    def test_table_and_keys_must_be_plain_names(self) -> None:
+        # The procedure's batch can run several statements, so these never reach it.
+        for config in (
+            replace(CONFIG, source_table_name="dbo.PAT_ENC; DROP TABLE x"),
+            replace(CONFIG, source_table_name="[dbo].[PAT ENC]"),
+            replace(CONFIG, key_columns="PAT_ENC_CSN_ID) AND 1=1; EXEC x; SELECT (PAT_ENC_CSN_ID"),
+        ):
+            with self.assertRaises(ValueError, msg=config):
+                validate_epic_change_method(config)
+            with self.assertRaises(ValueError, msg=config):
+                EpicStoredProcedureIngestionWorker(None, RUNTIME, config).read_changes("2026-01-01 00:00:00")
+        validate_epic_change_method(replace(CONFIG, source_table_name="Clarity.dbo.PAT_ENC", key_columns="PAT_ENC_CSN_ID, LINE"))
+        # Other methods keep accepting quoted names.
+        validate_epic_change_method(replace(CONFIG, epic_change_method="csa_table", source_table_name="[dbo].[PAT ENC]"))
+
     def test_build_worker_dispatch(self) -> None:
         orchestrator = JdbcIngestionOrchestrator(spark=None, runtime=RUNTIME)
         self.assertIsInstance(orchestrator.build_worker(CONFIG), EpicStoredProcedureIngestionWorker)

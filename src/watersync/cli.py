@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 
 from typing import Any
@@ -180,6 +181,9 @@ def import_config_main(argv: list[str] | None = None) -> int:
     parser.add_argument("--deploy-jobs", action="store_true", help="Create or update the jobs in the file")
     parser.add_argument("--dry-run", action="store_true", help="Only validate the file")
     args = parser.parse_args(argv)
+    for flag, name in (("--catalog", args.catalog), ("--schema", args.schema)):
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+            parser.error(f"{flag} must be a plain name (letters, digits and _)")
 
     try:
         validated = validate_file(json.loads(args.file.read_text()))

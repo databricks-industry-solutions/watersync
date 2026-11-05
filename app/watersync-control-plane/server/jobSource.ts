@@ -17,13 +17,19 @@ export const gitProviders = [
 ] as const;
 
 // Git references and pip requirements end up in a pip requirement and in a %pip line of the classic pipeline.
-const noQuotes = /^[^"'`\\$\n]+$/;
-const pipToken = /^[^\s"'`\\$]+$/;
+export const pipToken = /^[^\s"'`\\$]+$/;
+// One requirement and no pip options: a value starting with - would be read as an option line.
+const pipRequirement = /^[^\s"'`\\$-][^\s"'`\\$]*$/;
+// z.url() keeps newlines and quotes, which must never reach a requirement or a %pip line.
+const gitUrl = /^https?:\/\/[^\s"'`\\$]+$/i;
 
 const gitNotebooksSchema = z.object({
   source: z.literal('GIT'),
   // A user name in the URL (the org@ of Azure DevOps clone URLs) is dropped: Git credentials come from Databricks.
-  gitUrl: z.preprocess((value) => (typeof value === 'string' ? withoutUserInfo(value) : value), z.url()),
+  gitUrl: z.preprocess(
+    (value) => (typeof value === 'string' ? withoutUserInfo(value) : value),
+    z.url().regex(gitUrl, "Use the repository's https URL")
+  ),
   // Null means detected from the URL; self-hosted servers need it set.
   gitProvider: z
     .enum(gitProviders)
@@ -59,7 +65,14 @@ export const librarySchema = z.discriminatedUnion('source', [
   // Any pip requirement: watersync==0.4.0 from PyPI or the workspace's package repository, or a wheel URL.
   z.object({
     source: z.literal('PIP'),
-    requirement: z.string().trim().min(1).regex(noQuotes, 'Must not contain quotes, backslashes or $'),
+    requirement: z
+      .string()
+      .trim()
+      .min(1)
+      .regex(
+        pipRequirement,
+        'One requirement, such as watersync==0.4.0: no spaces, quotes, backslashes, $ or leading -'
+      ),
   }),
 ]);
 

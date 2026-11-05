@@ -31,6 +31,16 @@ def is_valid_procedure_name(name: str) -> bool:
     return bool(_PROCEDURE_NAME.match(name or ""))
 
 
+def is_valid_table_name(name: str) -> bool:
+    """Up to database.schema.table: the stored-procedure batch can run several statements, so only plain names."""
+    return bool(_PROCEDURE_NAME.match(name or ""))
+
+
+def is_valid_key_columns(value: str) -> bool:
+    """key_columns of a stored-procedure table: comma-separated plain column names."""
+    return bool(_COLUMN_NAMES.match((value or "").strip()))
+
+
 def is_valid_column_names(value: str) -> bool:
     """epic_change_column_names: empty, or comma-separated column names (passed to @i_ColumnNames)."""
     return not value or bool(_COLUMN_NAMES.match(value))
@@ -62,6 +72,13 @@ def _require_supported_dialect(dialect: SqlDialect) -> None:
 def _require_valid_procedure(procedure: str) -> None:
     if not is_valid_procedure_name(procedure):
         raise ValueError(f"Invalid EPIC changed-rows procedure name: {procedure!r}")
+
+
+def _require_valid_names(table: str, key_columns: str) -> None:
+    if not is_valid_table_name(table):
+        raise ValueError(f"Invalid source table name for the EPIC stored procedure: {table!r}")
+    if not is_valid_key_columns(key_columns):
+        raise ValueError(f"Invalid key_columns for the EPIC stored procedure: {key_columns!r}")
 
 
 def _sql_server_datetime(value: str) -> str:
@@ -365,6 +382,7 @@ class EpicStoredProcedureIngestionWorker(EpicCsaIngestionWorker):
 
     def read_changes(self, start: str) -> tuple[object | None, str]:
         """(rows, window_end) for [start, window_end); rows is None when the window is empty."""
+        _require_valid_names(self.config.source_table_name, self.config.key_columns)
         if self.sql_dialect == "sqlserver":
             if self.config.num_partitions > 1:
                 return self.read_changed_rows_in_parallel(start)

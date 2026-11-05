@@ -18,7 +18,12 @@ from watersync.workers import (
     JdbcIngestionWorker,
     TimestampWatermarkIngestionWorker,
 )
-from watersync.workers.epic_stored_procedure import is_valid_column_names, is_valid_procedure_name
+from watersync.workers.epic_stored_procedure import (
+    is_valid_column_names,
+    is_valid_key_columns,
+    is_valid_procedure_name,
+    is_valid_table_name,
+)
 
 EPIC_CHANGE_METHODS = ("csa_table", "stored_procedure")
 
@@ -41,6 +46,14 @@ def validate_epic_change_method(config: IngestionConfig) -> None:
         )
     if not config.key_column_list:
         raise ValueError(f"epic_change_method 'stored_procedure' for {table} requires key_columns")
+    # Its batch can run several statements: the table and keys must be plain names.
+    if not is_valid_table_name(table):
+        raise ValueError(f"epic_change_method 'stored_procedure' needs a plain table name (schema.table), got '{table}'")
+    if not is_valid_key_columns(config.key_columns):
+        raise ValueError(
+            f"key_columns for {table} must be comma-separated column names with the stored procedure, "
+            f"got '{config.key_columns}'"
+        )
     # An empty epic_change_procedure means Epic's documented EPIC_UTIL.ESP_CR_ALTERED_ROWS.
     if config.epic_change_procedure and not is_valid_procedure_name(config.epic_change_procedure):
         raise ValueError(

@@ -60,7 +60,10 @@ _DETECTED_PROVIDERS = [
 
 # Values that end up in a pip requirement or a %pip line, or in SQL: the same rules as the app.
 _PIP_TOKEN = re.compile(r"^[^\s\"'`\\$]+$")
-_NO_QUOTES = re.compile(r"^[^\"'`\\$\n]+$")
+# One requirement and no pip options: a value starting with - would be read as an option line.
+_PIP_REQUIREMENT = re.compile(r"^[^\s\"'`\\$-][^\s\"'`\\$]*$")
+_GIT_URL = re.compile(r"^https?://[^\s\"'`\\$]+$", re.IGNORECASE)
+_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _WHEEL_PATH = re.compile(
     r"^/(Volumes/[^/\s\"'`\\$]+/[^/\s\"'`\\$]+/[^/\s\"'`\\$]+|Workspace)/[^\s\"'`\\$]*[^/\s\"'`\\$]\.whl$"
 )
@@ -196,6 +199,12 @@ def _validate_config(entry: dict[str, Any], path: str, issues: _Issues) -> dict[
         issues.add(f"{path}.epicChangeProcedure", "Use a procedure name such as EPIC_UTIL.ESP_CR_ALTERED_ROWS")
     if config["epicChangeColumnNames"] and not _COLUMN_NAMES.match(config["epicChangeColumnNames"]):
         issues.add(f"{path}.epicChangeColumnNames", "Use comma-separated column names")
+    # The procedure's batch can run several statements: the same rules as the worker.
+    if method == "stored_procedure" and config["epicCsaEnabled"]:
+        if not _PROCEDURE_NAME.match(config["sourceTableName"]):
+            issues.add(f"{path}.sourceTableName", "Use a plain table name, such as dbo.PAT_ENC, with the stored procedure")
+        if config["keyColumns"] and not _COLUMN_NAMES.match(config["keyColumns"]):
+            issues.add(f"{path}.keyColumns", "Use comma-separated column names with the stored procedure")
     if config["autoCdcFromSnapshot"]:
         if incremental:
             issues.add(f"{path}.autoCdcFromSnapshot", "Snapshot CDC requires full ingestion")
@@ -252,7 +261,7 @@ def _validate_source(entry: dict[str, Any], path: str, issues: _Issues) -> tuple
         notebooks: dict[str, Any] = {"source": "WORKSPACE", "basePath": base_path}
     elif source == "GIT":
         git_url = without_user_info(_text(notebooks_in.get("gitUrl")))
-        if urlparse(git_url).scheme not in ("http", "https") or not urlparse(git_url).hostname:
+        if not _GIT_URL.match(git_url) or not urlparse(git_url).hostname:
             issues.add(f"{path}.notebooks.gitUrl", "Use the repository's https URL")
         provider = notebooks_in.get("gitProvider") or None
         if provider is not None and provider not in GIT_PROVIDERS:
@@ -289,8 +298,8 @@ def _validate_source(entry: dict[str, Any], path: str, issues: _Issues) -> tuple
             issues.add(f"{path}.library.path", "Use a wheel in a volume (/Volumes/<catalog>/<schema>/<volume>/<file>.whl) or the workspace")
     elif library_source == "PIP":
         library = {"source": "PIP", "requirement": _text(library_in.get("requirement"))}
-        if not _NO_QUOTES.match(library["requirement"]):
-            issues.add(f"{path}.library.requirement", "Required; no quotes, backslashes or $")
+        if not _PIP_REQUIREMENT.match(library["requirement"]):
+            issues.add(f"{path}.library.requirement", "One requirement, such as watersync==0.4.0; no spaces, quotes, backslashes, $ or leading -")
     elif library_source == "GIT":
         library = {"source": "GIT"}
         if notebooks.get("source") != "GIT":
@@ -746,7 +755,7 @@ class Warehouse:
     def table(self, name: str) -> Any:
         catalog, schema, table = name.split(".")
         rows = self.execute(
-            f"SELECT column_name FROM `{catalog}`.information_schema.columns "
+            f"SELECT column_name FROM {_quoted(catalog)}.information_schema.columns "
             "WHERE table_schema = :schema AND table_name = :table",
             {"schema": schema, "table": table},
         )
@@ -764,8 +773,12 @@ def ensure_tables(warehouse: Warehouse, catalog: str, schema: str) -> None:
     setup.create_watermark_state_table()
 
 
+def _quoted(name: str) -> str:
+    return "`" + name.replace("`", "``") + "`"
+
+
 def _config_table(catalog: str, schema: str) -> str:
-    return f"`{catalog}`.`{schema}`.`jdbc_ingestion_config`"
+    return f"{_quoted(catalog)}.{_quoted(schema)}.`jdbc_ingestion_config`"
 
 
 def upsert_configs(warehouse: Warehouse, catalog: str, schema: str, configs: list[dict[str, Any]]) -> None:
@@ -877,6 +890,9 @@ def ensure_cdc_pipeline(api: JobsApi, catalog: str, schema: str, job: dict[str, 
         digest = hashlib.sha256(group.encode()).hexdigest()[:8]
         path = f"{GENERATED_PIPELINES_DIR}/cdc_pipeline_bootstrap_classic_{slug}_{digest}"
         dependency = watersync_requirement(job["notebooks"], job["library"])
+        # Validation already rejects these; the requirement must never end the %pip line or its quotes.
+        if not _PIP_TOKEN.match(dependency):
+            raise ValueError(f"Refusing to write a %pip line for {dependency!r}")
         body = PIPELINE_BOOTSTRAP.replace("from __future__ import annotations\n\n", "")
         api.write_workspace_file(path, f'# Databricks notebook source\n# MAGIC %pip install "{dependency}"\n\n# COMMAND ----------\n\n{body}', notebook=True)
         library = {"notebook": {"path": f"/Workspace{path}"}}
@@ -900,6 +916,10 @@ def import_configuration(
     log: Callable[[str], None] = print,
 ) -> bool:
     """Writes the configs, then creates or updates the jobs; returns whether every job succeeded."""
+    # The same rule as the app: the names are also put into SQL that UnityCatalogSetup builds.
+    for flag, name in (("--catalog", catalog), ("--schema", schema)):
+        if not _IDENTIFIER.match(name):
+            raise ValueError(f"{flag} must be a plain name (letters, digits and _), got {name!r}")
     warehouse = Warehouse(workspace, warehouse_id)
     ensure_tables(warehouse, catalog, schema)
     upsert_configs(warehouse, catalog, schema, validated.configs)

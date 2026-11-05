@@ -63,6 +63,23 @@ export const configSchema = locationSchema
         message: 'The EPIC stored procedure requires EPIC CSA mode',
       });
     }
+    // The procedure's batch can run several statements: the same rules as the Python worker.
+    if (value.epicChangeMethod === 'stored_procedure' && value.epicCsaEnabled) {
+      if (!procedureName.test(value.sourceTableName)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['sourceTableName'],
+          message: 'Use a plain table name, such as dbo.PAT_ENC, with the stored procedure',
+        });
+      }
+      if (value.keyColumns?.trim() && !columnNames.test(value.keyColumns.trim())) {
+        context.addIssue({
+          code: 'custom',
+          path: ['keyColumns'],
+          message: 'Use comma-separated column names with the stored procedure',
+        });
+      }
+    }
     if (value.autoCdcFromSnapshot && value.ingestionType !== 'full') {
       context.addIssue({
         code: 'custom',

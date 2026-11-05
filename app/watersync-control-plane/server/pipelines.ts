@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { pipelines } from '@databricks/sdk-experimental';
 import { execute, parameter, tableName, workspace } from './sql.js';
 import { logger } from './logging.js';
+import { pipToken } from './jobSource.js';
 import type { PipelineCompute } from './schemas.js';
 
 export const plannerNotebookPath = 'notebooks/Task - Plan Configs';
@@ -29,8 +30,11 @@ const pipelineBootstrap =
 
 // Classic pipeline clusters cannot install pip packages and `environment` only applies to serverless,
 // so classic pipelines run a notebook that installs watersync with %pip before the bootstrap code.
-const classicPipelineBootstrap = (dependency: string) =>
-  `# Databricks notebook source\n# MAGIC %pip install "${dependency}"\n\n# COMMAND ----------\n\n${pipelineBootstrap.replace('from __future__ import annotations\n\n', '')}`;
+const classicPipelineBootstrap = (dependency: string) => {
+  // Validation already rejects these; the requirement must never end the %pip line or its quotes.
+  if (!pipToken.test(dependency)) throw new Error(`Refusing to write a %pip line for ${JSON.stringify(dependency)}`);
+  return `# Databricks notebook source\n# MAGIC %pip install "${dependency}"\n\n# COMMAND ----------\n\n${pipelineBootstrap.replace('from __future__ import annotations\n\n', '')}`;
+};
 
 export const cdcPipelineName = (ingestionGroup: string) => `[${ingestionGroup}] CDC SCD2 Pipeline`;
 

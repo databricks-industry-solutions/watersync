@@ -280,9 +280,27 @@ describe('readJobSettings', () => {
     ]) {
       expect(issues({ library: { source: 'WHEEL', path } }), path).toEqual(['library.path']);
     }
-    expect(issues({ library: { source: 'PIP', requirement: 'watersync"; rm -rf /' } })).toEqual([
-      'library.requirement',
-    ]);
+    for (const requirement of [
+      'watersync"; rm -rf /',
+      'watersync --extra-index-url https://example.org/simple',
+      '--index-url=https://example.org/simple',
+      '-r https://example.org/requirements.txt',
+    ]) {
+      expect(issues({ library: { source: 'PIP', requirement } }), requirement).toEqual(['library.requirement']);
+    }
+    expect(issues({ library: { source: 'PIP', requirement: 'watersync==0.4.0' } })).toBeUndefined();
+  });
+
+  it('rejects Git URLs that could break out of a requirement or a %pip line', () => {
+    for (const gitUrl of [
+      "https://github.com/org/watersync\nimport os; os.system('id')\n#",
+      'https://github.com/org/watersync"; import os #',
+      'https://github.com/org/water`sync`',
+      'ssh://git@github.com/org/watersync',
+      'file:///tmp/watersync',
+    ]) {
+      expect(issues({ notebooks: { ...github, gitUrl } }), gitUrl).toContain('notebooks.gitUrl');
+    }
   });
 
   it('detects the provider of the Git hosts it knows', () => {
