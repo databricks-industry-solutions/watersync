@@ -70,9 +70,19 @@ export async function saveJob(body: JobPayload) {
     },
   ];
   if (cdcPipelineId) {
+    // Starting a notebook takes a while: run the refresh only when the planner flagged tables for it.
+    tasks.push({
+      task_key: 'has_full_refresh_targets',
+      depends_on: [{ task_key: 'ingestion_worker' }],
+      condition_task: {
+        op: 'GREATER_THAN',
+        left: '{{tasks.ingestion_configs.values.full_refresh_count}}',
+        right: '0',
+      },
+    });
     tasks.push({
       task_key: 'selective_pipeline_refresh',
-      depends_on: [{ task_key: 'ingestion_worker' }],
+      depends_on: [{ task_key: 'has_full_refresh_targets', outcome: 'true' }],
       ...taskCompute,
       notebook_task: {
         ...notebookTask(body.notebooks, selectiveRefreshNotebookPath),
@@ -83,7 +93,12 @@ export async function saveJob(body: JobPayload) {
     });
     tasks.push({
       task_key: 'cdc_scd2_pipeline',
-      depends_on: [{ task_key: 'selective_pipeline_refresh' }],
+      // Runs after the refresh, or right away when the refresh is skipped.
+      depends_on: [
+        { task_key: 'has_full_refresh_targets', outcome: 'false' },
+        { task_key: 'selective_pipeline_refresh' },
+      ],
+      run_if: 'NONE_FAILED',
       pipeline_task: { pipeline_id: cdcPipelineId, full_refresh: false },
     });
   }

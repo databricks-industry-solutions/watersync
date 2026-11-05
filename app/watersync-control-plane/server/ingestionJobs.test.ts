@@ -212,6 +212,7 @@ describe('readJobSettings', () => {
     expect(job.tasks?.map((task) => task.notebook_task ?? task.for_each_task?.task.notebook_task)).toMatchObject([
       { notebook_path: '/Workspace/Users/me/watersync/notebooks/Task - Plan Configs', source: 'WORKSPACE' },
       { notebook_path: '/Workspace/Users/me/watersync/notebooks/Task - Run Ingestion', source: 'WORKSPACE' },
+      undefined,
       {
         notebook_path: '/Workspace/Users/me/watersync/src/watersync/utils/selective_pipeline_refresh',
         source: 'WORKSPACE',
