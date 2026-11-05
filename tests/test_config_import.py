@@ -113,6 +113,13 @@ class ValidationTest(unittest.TestCase):
             ],
         )
 
+    def test_jobs_without_compute_run_performance_optimized(self) -> None:
+        file = copy.deepcopy(SAMPLE)
+        del file["jobs"][0]["compute"], file["rowCheckJobs"][0]["compute"]
+        validated = validate_file(file)
+        self.assertEqual(validated.jobs[0]["compute"]["performanceTarget"], "PERFORMANCE_OPTIMIZED")
+        self.assertEqual(validated.row_check_jobs[0]["compute"]["performanceTarget"], "PERFORMANCE_OPTIMIZED")
+
     def test_git_install_needs_git_notebooks(self) -> None:
         file = copy.deepcopy(SAMPLE)
         file["jobs"][0]["notebooks"] = {"source": "WORKSPACE", "basePath": "/Workspace/x"}

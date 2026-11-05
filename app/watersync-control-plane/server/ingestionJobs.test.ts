@@ -110,7 +110,7 @@ const github = {
 };
 const jobCluster = {
   mode: 'JOB_CLUSTER',
-  performanceTarget: 'STANDARD',
+  performanceTarget: 'PERFORMANCE_OPTIMIZED',
   sparkVersion: '18.x-scala2.13',
   driverNodeTypeId: 'i3.xlarge',
   workerNodeTypeId: 'i3.xlarge',
@@ -148,7 +148,7 @@ describe('readJobSettings', () => {
         schedule: { enabled: true, quartzCronExpression: '0 30 2 * * ?', timezoneId: 'UTC', pauseStatus: 'PAUSED' },
         compute: {
           mode: 'JOB_CLUSTER',
-          performanceTarget: 'STANDARD',
+          performanceTarget: 'PERFORMANCE_OPTIMIZED',
           sparkVersion: '18.x-scala2.13',
           driverNodeTypeId: 'i3.2xlarge',
           workerNodeTypeId: 'i3.xlarge',

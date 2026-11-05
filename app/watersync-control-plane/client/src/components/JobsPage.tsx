@@ -552,7 +552,7 @@ function JobDialog({
   const [scheduleEnabled, setScheduleEnabled] = useState(false);
   const [scheduleActive, setScheduleActive] = useState(true);
   const [computeMode, setComputeMode] = useState<'SERVERLESS' | 'JOB_CLUSTER'>('SERVERLESS');
-  const [performanceTarget, setPerformanceTarget] = useState<PerformanceTarget>('STANDARD');
+  const [performanceTarget, setPerformanceTarget] = useState<PerformanceTarget>('PERFORMANCE_OPTIMIZED');
   const [tab, setTab] = useState('job');
   const [pipelineComputeMode, setPipelineComputeMode] = useState<'SERVERLESS' | 'CLASSIC'>('SERVERLESS');
   const [pipelinePhoton, setPipelinePhoton] = useState(false);

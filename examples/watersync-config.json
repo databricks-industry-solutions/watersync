@@ -306,7 +306,7 @@
       },
       "compute": {
         "mode": "SERVERLESS",
-        "performanceTarget": "STANDARD",
+        "performanceTarget": "PERFORMANCE_OPTIMIZED",
         "sparkVersion": "",
         "driverNodeTypeId": "",
         "workerNodeTypeId": "",
@@ -401,7 +401,7 @@
       },
       "compute": {
         "mode": "JOB_CLUSTER",
-        "performanceTarget": "STANDARD",
+        "performanceTarget": "PERFORMANCE_OPTIMIZED",
         "sparkVersion": "17.3.x-scala2.13",
         "driverNodeTypeId": "m5.xlarge",
         "workerNodeTypeId": "m5.xlarge",
@@ -501,7 +501,7 @@
       },
       "compute": {
         "mode": "SERVERLESS",
-        "performanceTarget": "STANDARD",
+        "performanceTarget": "PERFORMANCE_OPTIMIZED",
         "sparkVersion": "",
         "driverNodeTypeId": "",
         "workerNodeTypeId": "",
@@ -536,7 +536,7 @@
       },
       "compute": {
         "mode": "SERVERLESS",
-        "performanceTarget": "STANDARD",
+        "performanceTarget": "PERFORMANCE_OPTIMIZED",
         "sparkVersion": "",
         "driverNodeTypeId": "",
         "workerNodeTypeId": "",
@@ -569,7 +569,7 @@
       },
       "compute": {
         "mode": "JOB_CLUSTER",
-        "performanceTarget": "STANDARD",
+        "performanceTarget": "PERFORMANCE_OPTIMIZED",
         "sparkVersion": "17.3.x-scala2.13",
         "driverNodeTypeId": "m5.xlarge",
         "workerNodeTypeId": "m5.xlarge",

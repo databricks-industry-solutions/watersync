@@ -1275,7 +1275,7 @@ function RowCheckJobForm({
   const [scheduleActive, setScheduleActive] = useState(job?.schedule.pauseStatus !== 'PAUSED');
   const [computeMode, setComputeMode] = useState<ComputeMode>(job?.compute.mode ?? 'SERVERLESS');
   const [performanceTarget, setPerformanceTarget] = useState<PerformanceTarget>(
-    job?.compute.performanceTarget ?? 'STANDARD'
+    job?.compute.performanceTarget ?? 'PERFORMANCE_OPTIMIZED'
   );
   const [runAsMode, setRunAsMode] = useState<string>(job?.runAs.mode ?? 'DEFAULT');
   const nodeTypes = useNodeTypes(computeMode === 'JOB_CLUSTER');

@@ -320,7 +320,7 @@ def _validate_schedule(value: Any, path: str, issues: _Issues, default_cron: str
 def _validate_compute(value: Any, path: str, issues: _Issues) -> dict[str, Any]:
     compute = {
         "mode": "SERVERLESS",
-        "performanceTarget": "STANDARD",
+        "performanceTarget": "PERFORMANCE_OPTIMIZED",
         "sparkVersion": "",
         "driverNodeTypeId": "",
         "workerNodeTypeId": "",

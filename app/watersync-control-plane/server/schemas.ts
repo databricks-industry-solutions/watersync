@@ -275,7 +275,7 @@ export const rowCheckJobPayloadSchema = z.preprocess(
       // The same compute and identity options as an ingestion job: not every workspace has serverless jobs.
       compute: computeSchema.prefault({
         mode: 'SERVERLESS',
-        performanceTarget: 'STANDARD',
+        performanceTarget: 'PERFORMANCE_OPTIMIZED',
         sparkVersion: '',
         driverNodeTypeId: '',
         workerNodeTypeId: '',

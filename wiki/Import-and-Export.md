@@ -293,7 +293,7 @@ script. A non-zero exit code fails the step.
       },
       "compute": {
         "mode": "SERVERLESS",
-        "performanceTarget": "STANDARD",
+        "performanceTarget": "PERFORMANCE_OPTIMIZED",
         "sparkVersion": "",
         "driverNodeTypeId": "",
         "workerNodeTypeId": "",
@@ -395,7 +395,7 @@ Each entry holds the settings of one group's job, matching the fields of the **J
 | `schedule.timezoneId`                                          | string                                                      | For example `UTC` or `Europe/Rome`.                                                                                                                                                                  |
 | `schedule.pauseStatus`                                         | `PAUSED` \| `UNPAUSED`                                      |                                                                                                                                                                                                      |
 | `compute.mode`                                                 | `SERVERLESS` \| `JOB_CLUSTER`                               |                                                                                                                                                                                                      |
-| `compute.performanceTarget`                                    | `STANDARD` \| `PERFORMANCE_OPTIMIZED`                       | Serverless performance mode, shared by the job's serverless tasks.                                                                                                                                   |
+| `compute.performanceTarget`                                    | `STANDARD` \| `PERFORMANCE_OPTIMIZED`                       | Serverless performance mode, shared by the job's serverless tasks. Defaults to `PERFORMANCE_OPTIMIZED`; `STANDARD` costs less but each task can wait minutes for compute.                            |
 | `compute.sparkVersion`, `driverNodeTypeId`, `workerNodeTypeId` | string                                                      | Required for `JOB_CLUSTER`. Node types are cloud-specific.                                                                                                                                           |
 | `compute.minWorkers`, `maxWorkers`                             | integer                                                     | Autoscaling range; `maxWorkers` ≥ `minWorkers`.                                                                                                                                                      |
 | `pipelineCompute`                                              | object                                                      | Optional; defaults to serverless.                                                                                                                                                                    |

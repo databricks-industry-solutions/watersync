@@ -193,11 +193,11 @@ describe('row check jobs', () => {
     const job = state.jobs.get(9);
     expect(job?.environments?.[0]?.spec?.dependencies?.[0]).toMatch(/^watersync@git\+/);
     expect(job?.tasks?.[0]?.environment_key).toBe('watersync_environment');
-    expect(job?.performance_target).toBe('STANDARD');
+    expect(job?.performance_target).toBe('PERFORMANCE_OPTIMIZED');
     expect(job?.job_clusters).toBeUndefined();
     expect(job?.run_as).toBeUndefined();
     expect((await listRowCheckJobs('dev', 'watersync'))[0]).toMatchObject({
-      compute: { mode: 'SERVERLESS', performanceTarget: 'STANDARD' },
+      compute: { mode: 'SERVERLESS', performanceTarget: 'PERFORMANCE_OPTIMIZED' },
       runAs: { mode: 'DEFAULT' },
     });
   });
@@ -205,7 +205,7 @@ describe('row check jobs', () => {
   it('runs on a job cluster as another identity, and reads both back', async () => {
     const compute = {
       mode: 'JOB_CLUSTER',
-      performanceTarget: 'STANDARD',
+      performanceTarget: 'PERFORMANCE_OPTIMIZED',
       sparkVersion: '17.3.x-scala2.13',
       driverNodeTypeId: 'm5.xlarge',
       workerNodeTypeId: 'm5.2xlarge',
@@ -242,7 +242,7 @@ describe('row check jobs', () => {
 
     const compute = {
       mode: 'JOB_CLUSTER',
-      performanceTarget: 'STANDARD',
+      performanceTarget: 'PERFORMANCE_OPTIMIZED',
       sparkVersion: '17.3.x-scala2.13',
       driverNodeTypeId: 'm5.xlarge',
       workerNodeTypeId: 'm5.xlarge',

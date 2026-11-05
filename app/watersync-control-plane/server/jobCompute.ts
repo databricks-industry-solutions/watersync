@@ -53,7 +53,8 @@ export function readRequirement(settings: jobs.JobSettings | undefined): string 
 /** The compute a job was generated with, read back from its settings. */
 export function readJobCompute(settings: jobs.JobSettings | undefined): JobCompute {
   const cluster = settings?.job_clusters?.find((item) => item.job_cluster_key === jobClusterKey)?.new_cluster;
-  const performanceTarget = settings?.performance_target ?? 'STANDARD';
+  // Jobs without a performance target run performance optimized.
+  const performanceTarget = settings?.performance_target ?? 'PERFORMANCE_OPTIMIZED';
   return cluster
     ? {
         mode: 'JOB_CLUSTER',
