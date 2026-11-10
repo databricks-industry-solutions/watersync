@@ -862,7 +862,7 @@ class JobsApi:
         return self._do("POST", "/api/2.0/pipelines", body=settings)["pipeline_id"]
 
     def write_workspace_file(self, path: str, content: str, notebook: bool) -> None:
-        self._do("POST", "/api/2.0/workspace/mkdirs", body={"path": str(Path(path).parent)})
+        self._do("POST", "/api/2.0/workspace/mkdirs", body={"path": GENERATED_PIPELINES_DIR})
         self._do(
             "POST",
             "/api/2.0/workspace/import",
